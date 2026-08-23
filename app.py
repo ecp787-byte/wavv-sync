@@ -16,10 +16,11 @@ this service adds a dashboard and a manual "sync now" button.
 
 from __future__ import annotations
 
+import os
 import threading
 from datetime import datetime, timezone
 
-from flask import Flask, jsonify, request
+from flask import Flask, Response, jsonify, request
 from flask_cors import CORS
 
 import wavv_sync_core as core
@@ -29,6 +30,30 @@ cfg = core.load_config()
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": cfg["allowed_origin"]}})
+
+_DASHBOARD_PATH = os.path.join(os.path.dirname(__file__), "webflow-dashboard.html")
+
+
+@app.get("/")
+def dashboard():
+    """Serve the same dashboard used in Webflow, self-configured for same-origin use.
+    Handy for checking the tool works before wiring it into a Webflow Embed element.
+    """
+    try:
+        with open(_DASHBOARD_PATH) as f:
+            fragment = f.read()
+    except FileNotFoundError:
+        return jsonify({"error": "webflow-dashboard.html not found next to app.py"}), 500
+
+    fragment = fragment.replace("https://YOUR-RENDER-SERVICE.onrender.com", "")
+    fragment = fragment.replace("YOUR_SYNC_API_KEY", cfg["sync_api_key"] or "")
+    page = (
+        "<!doctype html><html><head><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>WAVV Call Sync</title></head><body style='margin:0;padding:24px;"
+        "background:#f9f9f7;min-height:100vh;'>" + fragment + "</body></html>"
+    )
+    return Response(page, mimetype="text/html")
 
 # Single in-process job slot: this is a small internal tool, not a job queue.
 # A lock keeps two manual triggers from racing each other.
