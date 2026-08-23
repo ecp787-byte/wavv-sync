@@ -74,15 +74,51 @@ GROUP BY 1;
 SELECT * FROM wavv_calls WHERE contact_id = 'ghl-99213' ORDER BY started_at DESC;
 ```
 
+## Front-end dashboard + manual trigger (Webflow or anywhere else)
+
+`app.py` is a small web API that sits in front of the same sync logic, for a front-end
+to call:
+
+| Endpoint | Method | Auth | Purpose |
+|---|---|---|---|
+| `/api/health` | GET | none | liveness check |
+| `/api/status` | GET | none | total rows synced, last sync time |
+| `/api/summary?days=14` | GET | none | daily rollup for charts/tables |
+| `/api/sync` | POST | `X-API-Key` header | trigger an on-demand sync (runs in the background; poll `/api/sync/status`) |
+| `/api/sync/status` | GET | none | status of the most recent manual sync job |
+
+**Deploy it** as its own Render Web Service (separate from the `wavv-sync` cron job,
+which keeps handling the reliable hourly schedule):
+- Runtime: Python · Build: `pip install -r requirements.txt` · Start: `gunicorn app:app`
+- Env vars: same as the cron job (`WAVV_API_KEY`, `WAVV_BASE_URL`, `DATABASE_URL`,
+  `WAVV_BACKFILL_SINCE`), plus `SYNC_API_KEY` (a random secret — the front-end sends
+  this to trigger a sync) and `ALLOWED_ORIGIN` (your front-end's URL, or `*`).
+
+**`webflow-dashboard.html`** is a self-contained dashboard (stat tiles, a 7-day
+inbound/outbound chart, a daily detail table, and a "Sync now" button) meant to be
+pasted into a Webflow **Embed** element:
+1. Deploy `app.py` to Render first and grab its URL.
+2. Open `webflow-dashboard.html`, fill in the two `TODO` values at the top of the
+   `<script>` block: `apiBase` (your Render web service URL) and `apiKey` (your
+   `SYNC_API_KEY`).
+3. In Webflow: add an **Embed** element to a page, paste the whole file's contents in,
+   publish.
+4. Note: the API key ships in the page's client-side JS, so anyone who views source
+   can see it — fine for a low-stakes internal tool, but consider Webflow's page
+   password-protection (paid plans) if you want it locked down further.
+
 ## Files
 
-| File              | Purpose                                                          |
-|-------------------|-------------------------------------------------------------------|
-| `wavv_client.py`  | REST client for WAVV's `/calls` endpoints, with retry/backoff.   |
-| `db.py`           | Postgres schema bootstrap, upsert, and sync-state helpers.       |
-| `schema.sql`      | Table/view DDL — safe to re-run.                                 |
-| `sync.py`         | CLI: `init`, `backfill`, `sync`, `summary`.                      |
-| `.env.example`    | Copy to `.env` and fill in your credentials.                     |
+| File                     | Purpose                                                          |
+|--------------------------|-------------------------------------------------------------------|
+| `wavv_client.py`         | REST client for WAVV's `/calls` endpoints, with retry/backoff.   |
+| `db.py`                  | Postgres schema bootstrap, upsert, and sync-state helpers.       |
+| `wavv_sync_core.py`      | Shared sync logic used by both the CLI and the web API.          |
+| `schema.sql`             | Table/view DDL — safe to re-run.                                 |
+| `sync.py`                | CLI: `init`, `backfill`, `sync`, `summary`, `emit-sql`.          |
+| `app.py`                 | Web API (Flask) for a front-end: status, summary, manual trigger.|
+| `webflow-dashboard.html` | Paste-in dashboard for a Webflow Embed element.                  |
+| `.env.example`           | Copy to `.env` and fill in your credentials.                     |
 
 ## Notes / things you may want to extend later
 

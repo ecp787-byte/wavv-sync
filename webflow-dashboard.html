@@ -1,0 +1,317 @@
+<!--
+  WAVV Call Sync dashboard — paste this into a Webflow "Embed" element.
+
+  BEFORE PASTING: fill in the two values in the CONFIG block below (search for "TODO").
+    - apiBase: your Render web service's URL, e.g. https://wavv-sync-api.onrender.com
+    - apiKey:  the SYNC_API_KEY you set as an environment variable on that Render service
+
+  This embed is self-contained (its own <style> and <script>) so it can be dropped into
+  a single Embed block on any Webflow page.
+-->
+<div class="wavv-dash" id="wavv-dash">
+  <style>
+    #wavv-dash {
+      --surface-1:      #fcfcfb;
+      --page-plane:     #f9f9f7;
+      --text-primary:   #0b0b0b;
+      --text-secondary: #52514e;
+      --text-muted:     #898781;
+      --gridline:       #e1e0d9;
+      --baseline:       #c3c2b7;
+      --border:         rgba(11,11,11,0.10);
+      --series-outbound: #2a78d6; /* categorical slot 1: blue */
+      --series-inbound:  #eb6834; /* categorical slot 2: orange */
+      --good:    #0ca30c;
+      --critical:#d03b3b;
+      color-scheme: light;
+
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--text-primary);
+      background: var(--page-plane);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 900px;
+      margin: 0 auto;
+      box-sizing: border-box;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-wf-theme="light"]) #wavv-dash {
+        --surface-1:      #1a1a19;
+        --page-plane:     #0d0d0d;
+        --text-primary:   #ffffff;
+        --text-secondary: #c3c2b7;
+        --text-muted:     #898781;
+        --gridline:       #2c2c2a;
+        --baseline:       #383835;
+        --border:         rgba(255,255,255,0.10);
+        --series-outbound: #3987e5;
+        --series-inbound:  #d95926;
+        --good:    #0ca30c;
+        --critical:#e66767;
+        color-scheme: dark;
+      }
+    }
+    #wavv-dash * { box-sizing: border-box; }
+    #wavv-dash h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+    #wavv-dash .wavv-sub { font-size: 13px; color: var(--text-secondary); margin: 0 0 20px; }
+
+    #wavv-dash .wavv-topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; flex-wrap: wrap; margin-bottom: 20px;
+    }
+    #wavv-dash .wavv-btn {
+      background: var(--series-outbound); color: #fff; border: none;
+      border-radius: 8px; padding: 10px 18px; font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    #wavv-dash .wavv-btn:hover { opacity: 0.88; }
+    #wavv-dash .wavv-btn:disabled { opacity: 0.5; cursor: default; }
+    #wavv-dash .wavv-sync-msg { font-size: 13px; color: var(--text-secondary); }
+    #wavv-dash .wavv-sync-msg.ok { color: var(--good); }
+    #wavv-dash .wavv-sync-msg.err { color: var(--critical); }
+
+    #wavv-dash .wavv-stats {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 12px; margin-bottom: 24px;
+    }
+    #wavv-dash .wavv-tile {
+      background: var(--surface-1); border: 1px solid var(--border);
+      border-radius: 10px; padding: 14px 16px;
+    }
+    #wavv-dash .wavv-tile-label {
+      font-size: 12px; color: var(--text-muted); margin: 0 0 6px;
+      text-transform: uppercase; letter-spacing: 0.02em;
+    }
+    #wavv-dash .wavv-tile-value {
+      font-size: 24px; font-weight: 700; margin: 0; font-variant-numeric: proportional-nums;
+    }
+
+    #wavv-dash .wavv-section-title {
+      font-size: 13px; font-weight: 600; color: var(--text-secondary);
+      margin: 0 0 10px; text-transform: uppercase; letter-spacing: 0.02em;
+    }
+    #wavv-dash .wavv-legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+    #wavv-dash .wavv-legend span { display: inline-flex; align-items: center; gap: 6px; }
+    #wavv-dash .wavv-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+    #wavv-dash .wavv-chart {
+      display: flex; align-items: flex-end; gap: 14px; height: 140px;
+      border-bottom: 1px solid var(--baseline); padding: 0 4px 0; margin-bottom: 28px;
+    }
+    #wavv-dash .wavv-daybar { display: flex; flex-direction: column; align-items: center; flex: 1; height: 100%; justify-content: flex-end; gap: 3px; }
+    #wavv-dash .wavv-bars { display: flex; gap: 3px; align-items: flex-end; height: 110px; }
+    #wavv-dash .wavv-bar { width: 14px; border-radius: 3px 3px 0 0; min-height: 2px; }
+    #wavv-dash .wavv-bar.outbound { background: var(--series-outbound); }
+    #wavv-dash .wavv-bar.inbound { background: var(--series-inbound); }
+    #wavv-dash .wavv-daylabel { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+
+    #wavv-dash table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    #wavv-dash th, #wavv-dash td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--gridline); }
+    #wavv-dash th { color: var(--text-muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; }
+    #wavv-dash td { color: var(--text-primary); font-variant-numeric: tabular-nums; }
+    #wavv-dash td.wavv-dir-outbound { color: var(--series-outbound); font-weight: 600; }
+    #wavv-dash td.wavv-dir-inbound { color: var(--series-inbound); font-weight: 600; }
+
+    #wavv-dash .wavv-empty { font-size: 13px; color: var(--text-muted); padding: 20px 0; text-align: center; }
+    #wavv-dash .wavv-table-wrap { overflow-x: auto; }
+  </style>
+
+  <h2>WAVV Call Sync</h2>
+  <p class="wavv-sub" id="wavv-status-line">Loading status…</p>
+
+  <div class="wavv-topbar">
+    <button class="wavv-btn" id="wavv-sync-btn">Sync now</button>
+    <span class="wavv-sync-msg" id="wavv-sync-msg"></span>
+  </div>
+
+  <div class="wavv-stats" id="wavv-stats">
+    <div class="wavv-tile"><p class="wavv-tile-label">Total calls (14d)</p><p class="wavv-tile-value" id="stat-total">—</p></div>
+    <div class="wavv-tile"><p class="wavv-tile-label">Conversations</p><p class="wavv-tile-value" id="stat-convos">—</p></div>
+    <div class="wavv-tile"><p class="wavv-tile-label">Answered calls</p><p class="wavv-tile-value" id="stat-answered">—</p></div>
+    <div class="wavv-tile"><p class="wavv-tile-label">Total talk time</p><p class="wavv-tile-value" id="stat-talktime">—</p></div>
+  </div>
+
+  <p class="wavv-section-title">Last 7 days</p>
+  <div class="wavv-legend">
+    <span><i style="background:var(--series-outbound)"></i>Outbound</span>
+    <span><i style="background:var(--series-inbound)"></i>Inbound</span>
+  </div>
+  <div class="wavv-chart" id="wavv-chart"><div class="wavv-empty">No data yet</div></div>
+
+  <p class="wavv-section-title">Daily detail</p>
+  <div class="wavv-table-wrap">
+    <table>
+      <thead>
+        <tr><th>Date</th><th>Direction</th><th>Calls</th><th>Conversations</th><th>Answered</th><th>Avg talk (s)</th><th>Total talk (s)</th></tr>
+      </thead>
+      <tbody id="wavv-table-body"><tr><td colspan="7" class="wavv-empty">No data yet</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function () {
+  // ---- CONFIG: fill these in after deploying the Render web service ----
+  var CONFIG = {
+    apiBase: "https://YOUR-RENDER-SERVICE.onrender.com",  // TODO: replace with your Render service URL
+    apiKey: "YOUR_SYNC_API_KEY"                            // TODO: replace with your SYNC_API_KEY
+  };
+  // ------------------------------------------------------------------
+
+  var root = document.getElementById("wavv-dash");
+  var statusLine = root.querySelector("#wavv-status-line");
+  var syncBtn = root.querySelector("#wavv-sync-btn");
+  var syncMsg = root.querySelector("#wavv-sync-msg");
+  var pollTimer = null;
+
+  function fmtDuration(totalSeconds) {
+    if (!totalSeconds) return "0m";
+    var h = Math.floor(totalSeconds / 3600);
+    var m = Math.round((totalSeconds % 3600) / 60);
+    return (h > 0 ? h + "h " : "") + m + "m";
+  }
+
+  function timeAgo(iso) {
+    if (!iso) return "never";
+    var diffMs = Date.now() - new Date(iso).getTime();
+    var mins = Math.round(diffMs / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + " min ago";
+    var hours = Math.round(mins / 60);
+    if (hours < 24) return hours + "h ago";
+    return Math.round(hours / 24) + "d ago";
+  }
+
+  function api(path, opts) {
+    opts = opts || {};
+    return fetch(CONFIG.apiBase + path, opts).then(function (res) {
+      if (!res.ok) return res.json().then(function (b) { throw new Error(b.error || res.statusText); });
+      return res.json();
+    });
+  }
+
+  function renderStats(summary) {
+    var totals = { calls: 0, convos: 0, answered: 0, talk: 0 };
+    summary.forEach(function (r) {
+      totals.calls += r.total_calls;
+      totals.convos += r.conversations;
+      totals.answered += r.answered_calls;
+      totals.talk += r.total_talk_seconds || 0;
+    });
+    root.querySelector("#stat-total").textContent = totals.calls;
+    root.querySelector("#stat-convos").textContent = totals.convos;
+    root.querySelector("#stat-answered").textContent = totals.answered;
+    root.querySelector("#stat-talktime").textContent = fmtDuration(totals.talk);
+  }
+
+  function renderChart(summary) {
+    var chart = root.querySelector("#wavv-chart");
+    var byDate = {};
+    summary.forEach(function (r) {
+      byDate[r.date] = byDate[r.date] || { outbound: 0, inbound: 0 };
+      byDate[r.date][r.direction] = r.total_calls;
+    });
+    var dates = Object.keys(byDate).sort().slice(-7);
+    if (!dates.length) { chart.innerHTML = '<div class="wavv-empty">No data yet</div>'; return; }
+    var max = 1;
+    dates.forEach(function (d) { max = Math.max(max, byDate[d].outbound, byDate[d].inbound); });
+
+    chart.innerHTML = "";
+    dates.forEach(function (d) {
+      var v = byDate[d];
+      var day = document.createElement("div");
+      day.className = "wavv-daybar";
+      var bars = document.createElement("div");
+      bars.className = "wavv-bars";
+      ["outbound", "inbound"].forEach(function (dir) {
+        var bar = document.createElement("div");
+        bar.className = "wavv-bar " + dir;
+        bar.style.height = Math.max(2, Math.round((v[dir] / max) * 110)) + "px";
+        bar.title = dir + ": " + v[dir] + " calls on " + d;
+        bars.appendChild(bar);
+      });
+      var label = document.createElement("div");
+      label.className = "wavv-daylabel";
+      label.textContent = d.slice(5); // MM-DD
+      day.appendChild(bars);
+      day.appendChild(label);
+      chart.appendChild(day);
+    });
+  }
+
+  function renderTable(summary) {
+    var body = root.querySelector("#wavv-table-body");
+    if (!summary.length) {
+      body.innerHTML = '<tr><td colspan="7" class="wavv-empty">No data yet</td></tr>';
+      return;
+    }
+    body.innerHTML = summary.map(function (r) {
+      return "<tr>" +
+        "<td>" + r.date + "</td>" +
+        '<td class="wavv-dir-' + r.direction + '">' + r.direction + "</td>" +
+        "<td>" + r.total_calls + "</td>" +
+        "<td>" + r.conversations + "</td>" +
+        "<td>" + r.answered_calls + "</td>" +
+        "<td>" + (r.avg_talk_seconds != null ? r.avg_talk_seconds : "—") + "</td>" +
+        "<td>" + (r.total_talk_seconds != null ? r.total_talk_seconds : "—") + "</td>" +
+        "</tr>";
+    }).join("");
+  }
+
+  function loadAll() {
+    Promise.all([api("/api/status"), api("/api/summary?days=14")])
+      .then(function (results) {
+        var status = results[0], summary = results[1];
+        statusLine.textContent = status.total_calls + " calls in database · last synced " + timeAgo(status.last_sync_run_at);
+        renderStats(summary);
+        renderChart(summary);
+        renderTable(summary);
+      })
+      .catch(function (err) {
+        statusLine.textContent = "Couldn't load data: " + err.message + " (if this just deployed, the server may be waking up — try again in ~30s)";
+      });
+  }
+
+  function pollSyncJob() {
+    pollTimer = setInterval(function () {
+      api("/api/sync/status").then(function (job) {
+        if (!job.running) {
+          clearInterval(pollTimer);
+          syncBtn.disabled = false;
+          if (job.last_error) {
+            syncMsg.textContent = "Sync failed: " + job.last_error;
+            syncMsg.className = "wavv-sync-msg err";
+          } else {
+            var r = job.last_result || {};
+            syncMsg.textContent = "Synced " + (r.synced != null ? r.synced : 0) + " calls.";
+            syncMsg.className = "wavv-sync-msg ok";
+          }
+          loadAll();
+        }
+      });
+    }, 2000);
+  }
+
+  syncBtn.addEventListener("click", function () {
+    syncBtn.disabled = true;
+    syncMsg.textContent = "Syncing…";
+    syncMsg.className = "wavv-sync-msg";
+    api("/api/sync", { method: "POST", headers: { "X-API-Key": CONFIG.apiKey } })
+      .then(function (res) {
+        if (res.status === "already_running") {
+          syncMsg.textContent = "A sync is already running…";
+        }
+        pollSyncJob();
+      })
+      .catch(function (err) {
+        syncBtn.disabled = false;
+        syncMsg.textContent = "Couldn't start sync: " + err.message;
+        syncMsg.className = "wavv-sync-msg err";
+      });
+  });
+
+  loadAll();
+  setInterval(loadAll, 60000);
+})();
+</script>
