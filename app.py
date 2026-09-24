@@ -3,15 +3,25 @@
 Small web API in front of the WAVV -> Postgres sync tool.
 
 Endpoints:
-    GET  /api/health        -> {"ok": true}
-    GET  /api/status        -> DB-level sync status (last synced call, row count)
-    GET  /api/summary       -> daily rollup (calls, conversations, talk time) for a dashboard
-    POST /api/sync          -> trigger an on-demand incremental sync (requires X-API-Key header)
-    GET  /api/sync/status   -> status of the most recent manually-triggered sync job
+    GET    /api/health        -> {"ok": true}
+    GET    /api/status        -> DB-level sync status (row count, connected dialer count)
+    GET    /api/summary       -> daily rollup (calls, conversations, talk time) for a dashboard
+    GET    /api/weekly        -> weekly rollup, for a longer trend chart
+    GET    /api/weekly/compare-> this-week-to-date vs last-week comparison + % change
+    GET    /api/dispositions  -> call counts/talk time broken down by disposition, per direction
+    GET    /api/talktime      -> avg/median/min/max/total talk time per direction
+    GET    /api/agents        -> connected dialers, with masked API keys (requires X-API-Key header)
+    POST   /api/agents        -> connect a new dialer: {agent_name, api_key, base_url?} (requires X-API-Key header)
+    PATCH  /api/agents/<id>   -> rename or activate/deactivate a dialer (requires X-API-Key header)
+    DELETE /api/agents/<id>   -> disconnect a dialer (requires X-API-Key header)
+    GET    /api/agents/summary-> per-agent call totals (which agent's dialer produced what)
+    POST   /api/backfill      -> pull ALL historical calls for every connected dialer (requires X-API-Key header)
+    POST   /api/sync          -> on-demand incremental sync for every connected dialer (requires X-API-Key header)
+    GET    /api/sync/status   -> status of the most recent manually-triggered sync/backfill job
 
 Intended to sit behind a front-end (e.g. a Webflow page) that calls these over HTTPS.
 Runs alongside the existing Render Cron Job, which handles the reliable hourly schedule;
-this service adds a dashboard and a manual "sync now" button.
+this service adds a dashboard, dialer management, and a manual "sync now" button.
 """
 
 from __future__ import annotations
@@ -60,6 +70,7 @@ def dashboard():
 _job_lock = threading.Lock()
 _job_state = {
     "running": False,
+    "last_kind": None,
     "last_started_at": None,
     "last_finished_at": None,
     "last_result": None,
@@ -67,15 +78,19 @@ _job_state = {
 }
 
 
-def _run_sync_job():
+def _run_job(kind: str):
     try:
-        result = core.do_incremental_sync(cfg)
+        if kind == "backfill":
+            result = core.do_backfill(cfg, since="all")
+        else:
+            result = core.do_incremental_sync(cfg)
         _job_state["last_result"] = result
         _job_state["last_error"] = None
     except Exception as e:  # noqa: BLE001 - surface any failure to the dashboard
         _job_state["last_error"] = str(e)
     finally:
         _job_state["running"] = False
+        _job_state["last_kind"] = kind
         _job_state["last_finished_at"] = datetime.now(timezone.utc).isoformat()
 
 
@@ -101,15 +116,123 @@ def summary():
         return jsonify({"error": str(e)}), 500
 
 
+@app.get("/api/dispositions")
+def dispositions():
+    try:
+        return jsonify(core.get_dispositions(cfg))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/talktime")
+def talktime():
+    try:
+        return jsonify(core.get_talktime_stats(cfg))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/weekly")
+def weekly():
+    weeks = request.args.get("weeks", default=12, type=int)
+    try:
+        return jsonify(core.get_weekly_summary(cfg, weeks=weeks))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/weekly/compare")
+def weekly_compare():
+    try:
+        return jsonify(core.get_week_over_week(cfg))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/agents/summary")
+def agents_summary():
+    try:
+        return jsonify(core.get_agent_summary(cfg))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+def _admin_authorized() -> bool:
+    provided_key = request.headers.get("X-API-Key", "")
+    return bool(cfg["sync_api_key"]) and provided_key == cfg["sync_api_key"]
+
+
+# --- Agent (connected dialer) management -- each row is one WAVV API key,
+# attributed to the agent whose dialer it belongs to. Gated behind the same
+# admin key as /api/sync and /api/backfill since this manages credentials. ---
+
+@app.get("/api/agents")
+def list_agents():
+    if not _admin_authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        return jsonify(core.list_agents(cfg))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.post("/api/agents")
+def add_agent():
+    if not _admin_authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    try:
+        agent = core.create_agent(cfg, body.get("agent_name"), body.get("api_key"), body.get("base_url"))
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:  # noqa: BLE001 - e.g. duplicate agent_name (unique constraint)
+        return jsonify({"error": str(e)}), 400
+
+    # Kick off a backfill right away so the newly connected dialer's history
+    # starts flowing without an extra manual step.
+    with _job_lock:
+        if not _job_state["running"]:
+            _job_state["running"] = True
+            _job_state["last_started_at"] = datetime.now(timezone.utc).isoformat()
+            threading.Thread(target=_run_job, args=("backfill",), daemon=True).start()
+
+    return jsonify({"status": "added", "agent": agent}), 201
+
+
+@app.patch("/api/agents/<agent_id>")
+def edit_agent(agent_id):
+    if not _admin_authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    fields = {k: v for k, v in body.items() if k in ("agent_name", "api_key", "base_url", "active")}
+    if not fields:
+        return jsonify({"error": "no updatable fields provided"}), 400
+    try:
+        ok = core.update_agent(cfg, agent_id, **fields)
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 400
+    if not ok:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"status": "updated"})
+
+
+@app.delete("/api/agents/<agent_id>")
+def remove_agent(agent_id):
+    if not _admin_authorized():
+        return jsonify({"error": "unauthorized"}), 401
+    ok = core.delete_agent(cfg, agent_id)
+    if not ok:
+        return jsonify({"error": "not found"}), 404
+    return jsonify({"status": "deleted"})
+
+
 @app.get("/api/sync/status")
 def sync_job_status():
     return jsonify(_job_state)
 
 
-@app.post("/api/sync")
-def trigger_sync():
-    provided_key = request.headers.get("X-API-Key", "")
-    if not cfg["sync_api_key"] or provided_key != cfg["sync_api_key"]:
+def _start_job(kind: str):
+    if not _admin_authorized():
         return jsonify({"error": "unauthorized"}), 401
 
     with _job_lock:
@@ -117,9 +240,19 @@ def trigger_sync():
             return jsonify({"status": "already_running", "job": _job_state}), 409
         _job_state["running"] = True
         _job_state["last_started_at"] = datetime.now(timezone.utc).isoformat()
-        threading.Thread(target=_run_sync_job, daemon=True).start()
+        threading.Thread(target=_run_job, args=(kind,), daemon=True).start()
 
-    return jsonify({"status": "started"})
+    return jsonify({"status": "started", "kind": kind})
+
+
+@app.post("/api/sync")
+def trigger_sync():
+    return _start_job("sync")
+
+
+@app.post("/api/backfill")
+def trigger_backfill():
+    return _start_job("backfill")
 
 
 if __name__ == "__main__":
