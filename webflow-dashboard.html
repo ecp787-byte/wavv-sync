@@ -54,7 +54,7 @@
     }
     #wavv-dash * { box-sizing: border-box; }
     #wavv-dash h2 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
-    #wavv-dash .wavv-sub { font-size: 13px; color: var(--text-secondary); margin: 0 0 20px; }
+    #wavv-dash .wavv-sub { font-size: 13px; color: var(--text-secondary); margin: 0; }
 
     #wavv-dash .wavv-topbar {
       display: flex; align-items: center; justify-content: space-between;
@@ -321,191 +321,254 @@
     #wavv-dash .wavv-lb-formula {
       font-size: 11.5px; color: var(--text-muted); margin: 14px 0 0;
     }
+
+    /* Header + tab navigation: replaces one long stacked scroll with grouped
+       sections (Leaderboard / Overview / Performance / Dispositions / Manage
+       dialers). Every panel still renders on the normal refresh cycle whether
+       visible or not -- only display toggles -- so no element id moved and no
+       existing render/load function needed to change. */
+    #wavv-dash .wavv-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 16px; flex-wrap: wrap; margin-bottom: 18px;
+    }
+    #wavv-dash .wavv-header-titles { min-width: 200px; }
+    #wavv-dash .wavv-header h2 { font-size: 20px; }
+
+    #wavv-dash .wavv-tabnav {
+      display: flex; gap: 4px; margin-bottom: 20px; border-bottom: 1px solid var(--gridline);
+      overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    }
+    #wavv-dash .wavv-tabnav::-webkit-scrollbar { display: none; }
+    #wavv-dash .wavv-tab-btn {
+      background: none; border: none; color: var(--text-secondary);
+      font-size: 13.5px; font-weight: 600; padding: 10px 16px; cursor: pointer;
+      white-space: nowrap; border-bottom: 2px solid transparent; margin-bottom: -1px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    #wavv-dash .wavv-tab-btn:hover { color: var(--text-primary); }
+    #wavv-dash .wavv-tab-btn.active { color: var(--series-outbound); border-bottom-color: var(--series-outbound); }
+    #wavv-dash .wavv-tab-panel[hidden] { display: none; }
+
+    /* General polish: a touch of depth on cards/buttons and a hover
+       affordance on clickable rows -- no layout logic changed. */
+    #wavv-dash .wavv-card { box-shadow: 0 1px 2px rgba(11,11,11,0.04); }
+    #wavv-dash .wavv-btn { box-shadow: 0 1px 2px rgba(11,11,11,0.10); }
+    #wavv-dash .wavv-btn:active { transform: translateY(1px); }
+    #wavv-dash .wavv-agent-row,
+    #wavv-dash .wavv-lb-row {
+      border-radius: 8px; padding-left: 8px; padding-right: 8px;
+      margin-left: -8px; margin-right: -8px; transition: background 0.12s;
+    }
+    #wavv-dash .wavv-agent-row:hover,
+    #wavv-dash .wavv-lb-row:hover {
+      background: var(--page-plane);
+    }
   </style>
 
-  <h2>WAVV Call Sync</h2>
-  <p class="wavv-sub" id="wavv-status-line">Loading status…</p>
-
-  <div class="wavv-topbar">
-    <button class="wavv-btn" id="wavv-backfill-btn" title="Pull every call WAVV has, not just recent ones">Backfill all history</button>
-    <button class="wavv-btn wavv-btn-secondary" id="wavv-sync-btn" title="Pull calls since the last successful run">Sync now</button>
-    <span class="wavv-sync-msg" id="wavv-sync-msg"></span>
-  </div>
-
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Connected dialers</p>
+  <div class="wavv-header">
+    <div class="wavv-header-titles">
+      <h2>WAVV Call Sync</h2>
+      <p class="wavv-sub" id="wavv-status-line">Loading status…</p>
     </div>
-    <div id="wavv-agents-list"><div class="wavv-empty">Loading…</div></div>
-    <form class="wavv-agent-form" id="wavv-agent-form">
-      <input type="text" id="wavv-agent-name" placeholder="Agent name (e.g. Jordan)" autocomplete="off">
-      <input type="text" id="wavv-agent-npn" placeholder="NPN (optional)" autocomplete="off">
-      <input type="text" id="wavv-agent-key" placeholder="Their WAVV API key" autocomplete="off">
-      <button type="submit" class="wavv-btn" id="wavv-agent-add-btn">Add dialer</button>
-    </form>
-    <p class="wavv-admin-gate" id="wavv-agent-msg">Adding a dialer starts a full history backfill for it automatically.</p>
+    <div class="wavv-topbar">
+      <button class="wavv-btn" id="wavv-backfill-btn" title="Pull every call WAVV has, not just recent ones">Backfill all history</button>
+      <button class="wavv-btn wavv-btn-secondary" id="wavv-sync-btn" title="Pull calls since the last successful run">Sync now</button>
+      <span class="wavv-sync-msg" id="wavv-sync-msg"></span>
+    </div>
   </div>
 
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Leaderboard</p>
-      <div class="wavv-period-tabs" id="wavv-lb-period-tabs">
-        <button type="button" class="wavv-period-tab active" data-period="daily">Today</button>
-        <button type="button" class="wavv-period-tab" data-period="weekly">This week</button>
-        <button type="button" class="wavv-period-tab" data-period="monthly">This month</button>
-        <button type="button" class="wavv-period-tab" data-period="quarterly">This quarter</button>
+  <div class="wavv-tabnav" id="wavv-tabnav" role="tablist">
+    <button type="button" class="wavv-tab-btn active" data-tab="leaderboard">Leaderboard</button>
+    <button type="button" class="wavv-tab-btn" data-tab="overview">Overview</button>
+    <button type="button" class="wavv-tab-btn" data-tab="performance">Performance</button>
+    <button type="button" class="wavv-tab-btn" data-tab="dispositions">Dispositions</button>
+    <button type="button" class="wavv-tab-btn" data-tab="manage">Manage dialers</button>
+  </div>
+
+  <div class="wavv-tab-panel" data-tab-panel="leaderboard">
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Leaderboard</p>
+        <div class="wavv-period-tabs" id="wavv-lb-period-tabs">
+          <button type="button" class="wavv-period-tab active" data-period="daily">Today</button>
+          <button type="button" class="wavv-period-tab" data-period="weekly">This week</button>
+          <button type="button" class="wavv-period-tab" data-period="monthly">This month</button>
+          <button type="button" class="wavv-period-tab" data-period="quarterly">This quarter</button>
+        </div>
+      </div>
+
+      <div class="wavv-lb-podium" id="wavv-lb-podium"><div class="wavv-empty">Loading…</div></div>
+
+      <div class="wavv-stats" id="wavv-lb-totals">
+        <div class="wavv-tile"><p class="wavv-tile-label">Appointments</p><p class="wavv-tile-value" id="lb-total-appts">—</p></div>
+        <div class="wavv-tile"><p class="wavv-tile-label">Conversations</p><p class="wavv-tile-value" id="lb-total-convos">—</p></div>
+        <div class="wavv-tile"><p class="wavv-tile-label">Call attempts</p><p class="wavv-tile-value" id="lb-total-calls">—</p></div>
+        <div class="wavv-tile"><p class="wavv-tile-label">Answered</p><p class="wavv-tile-value" id="lb-total-answered">—</p></div>
+        <div class="wavv-tile"><p class="wavv-tile-label">Talk time</p><p class="wavv-tile-value" id="lb-total-talk">—</p></div>
+      </div>
+
+      <div id="wavv-lb-list"><div class="wavv-empty">No data yet</div></div>
+      <p class="wavv-lb-formula">Points = appointments×25 + conversations×5 + call attempts×1 + talk minutes×0.5 — built from call data only.</p>
+    </div>
+  </div>
+
+  <div class="wavv-tab-panel" data-tab-panel="overview" hidden>
+    <div class="wavv-stats" id="wavv-stats">
+      <div class="wavv-tile"><p class="wavv-tile-label">Total calls (14d)</p><p class="wavv-tile-value" id="stat-total">—</p></div>
+      <div class="wavv-tile"><p class="wavv-tile-label">Conversations</p><p class="wavv-tile-value" id="stat-convos">—</p></div>
+      <div class="wavv-tile"><p class="wavv-tile-label">Answered calls</p><p class="wavv-tile-value" id="stat-answered">—</p></div>
+      <div class="wavv-tile"><p class="wavv-tile-label">Total talk time</p><p class="wavv-tile-value" id="stat-talktime">—</p></div>
+    </div>
+
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Week over week</p>
+      </div>
+      <div class="wavv-wowgrid" id="wavv-wow-grid"><div class="wavv-empty">No data yet</div></div>
+      <p class="wavv-ttsecondary" style="margin-top:12px;">This week is week-to-date (Monday start), compared against all of last week.</p>
+    </div>
+
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Weekly trend</p>
+        <div class="wavv-legend">
+          <span><i style="background:var(--series-outbound)"></i>Outbound</span>
+          <span><i style="background:var(--series-inbound)"></i>Inbound</span>
+        </div>
+      </div>
+      <div class="wavv-chart" id="wavv-weekly-chart"><div class="wavv-empty">No data yet</div></div>
+    </div>
+
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Last 7 days</p>
+        <div class="wavv-legend">
+          <span><i style="background:var(--series-outbound)"></i>Outbound</span>
+          <span><i style="background:var(--series-inbound)"></i>Inbound</span>
+        </div>
+      </div>
+      <div class="wavv-chart" id="wavv-chart"><div class="wavv-empty">No data yet</div></div>
+    </div>
+  </div>
+
+  <div class="wavv-tab-panel" data-tab-panel="performance" hidden>
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Performance by agent</p>
+      </div>
+      <div class="wavv-perf-controls">
+        <div class="wavv-period-tabs" id="wavv-perf-period-tabs">
+          <button type="button" class="wavv-period-tab" data-period="daily">Daily</button>
+          <button type="button" class="wavv-period-tab active" data-period="weekly">Weekly</button>
+          <button type="button" class="wavv-period-tab" data-period="monthly">Monthly</button>
+          <button type="button" class="wavv-period-tab" data-period="quarterly">Quarterly</button>
+        </div>
+        <select class="wavv-agent-filter" id="wavv-perf-agent-select">
+          <option value="">All agents</option>
+        </select>
+      </div>
+      <div class="wavv-table-wrap">
+        <table>
+          <thead>
+            <tr><th>Agent</th><th>Period</th><th>Calls</th><th>Conversations</th><th>Answered</th><th>Talk time</th></tr>
+          </thead>
+          <tbody id="wavv-perf-body"><tr><td colspan="6" class="wavv-empty">No data yet</td></tr></tbody>
+        </table>
       </div>
     </div>
 
-    <div class="wavv-lb-podium" id="wavv-lb-podium"><div class="wavv-empty">Loading…</div></div>
-
-    <div class="wavv-stats" id="wavv-lb-totals">
-      <div class="wavv-tile"><p class="wavv-tile-label">Appointments</p><p class="wavv-tile-value" id="lb-total-appts">—</p></div>
-      <div class="wavv-tile"><p class="wavv-tile-label">Conversations</p><p class="wavv-tile-value" id="lb-total-convos">—</p></div>
-      <div class="wavv-tile"><p class="wavv-tile-label">Call attempts</p><p class="wavv-tile-value" id="lb-total-calls">—</p></div>
-      <div class="wavv-tile"><p class="wavv-tile-label">Answered</p><p class="wavv-tile-value" id="lb-total-answered">—</p></div>
-      <div class="wavv-tile"><p class="wavv-tile-label">Talk time</p><p class="wavv-tile-value" id="lb-total-talk">—</p></div>
-    </div>
-
-    <div id="wavv-lb-list"><div class="wavv-empty">No data yet</div></div>
-    <p class="wavv-lb-formula">Points = appointments×25 + conversations×5 + call attempts×1 + talk minutes×0.5 — built from call data only.</p>
-  </div>
-
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Explore &amp; scorecard</p>
-    </div>
-    <div class="wavv-explore-controls">
-      <select class="wavv-agent-filter" id="wavv-explore-agent-select">
-        <option value="">All agents</option>
-      </select>
-      <div class="wavv-date-range">
-        <input type="date" class="wavv-date-input" id="wavv-explore-start" aria-label="Start date">
-        <span class="wavv-date-sep">to</span>
-        <input type="date" class="wavv-date-input" id="wavv-explore-end" aria-label="End date">
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Explore &amp; scorecard</p>
       </div>
-      <div class="wavv-period-tabs" id="wavv-explore-presets">
-        <button type="button" class="wavv-period-tab" data-preset="7d">7D</button>
-        <button type="button" class="wavv-period-tab" data-preset="30d">30D</button>
-        <button type="button" class="wavv-period-tab" data-preset="month">This month</button>
-        <button type="button" class="wavv-period-tab" data-preset="lastmonth">Last month</button>
-        <button type="button" class="wavv-period-tab" data-preset="quarter">This quarter</button>
-        <button type="button" class="wavv-period-tab" data-preset="ytd">YTD</button>
-        <button type="button" class="wavv-period-tab active" data-preset="all">All time</button>
+      <div class="wavv-explore-controls">
+        <select class="wavv-agent-filter" id="wavv-explore-agent-select">
+          <option value="">All agents</option>
+        </select>
+        <div class="wavv-date-range">
+          <input type="date" class="wavv-date-input" id="wavv-explore-start" aria-label="Start date">
+          <span class="wavv-date-sep">to</span>
+          <input type="date" class="wavv-date-input" id="wavv-explore-end" aria-label="End date">
+        </div>
+        <div class="wavv-period-tabs" id="wavv-explore-presets">
+          <button type="button" class="wavv-period-tab" data-preset="7d">7D</button>
+          <button type="button" class="wavv-period-tab" data-preset="30d">30D</button>
+          <button type="button" class="wavv-period-tab" data-preset="month">This month</button>
+          <button type="button" class="wavv-period-tab" data-preset="lastmonth">Last month</button>
+          <button type="button" class="wavv-period-tab" data-preset="quarter">This quarter</button>
+          <button type="button" class="wavv-period-tab" data-preset="ytd">YTD</button>
+          <button type="button" class="wavv-period-tab active" data-preset="all">All time</button>
+        </div>
       </div>
-    </div>
 
-    <p class="wavv-scorecard-label" id="wavv-scorecard-label">All agents · all time</p>
+      <p class="wavv-scorecard-label" id="wavv-scorecard-label">All agents · all time</p>
 
-    <div class="wavv-stats" id="wavv-scorecard-stats">
-      <div class="wavv-tile"><p class="wavv-tile-label">Total calls</p><p class="wavv-tile-value" id="sc-total">—</p><p class="wavv-scorecard-substats" id="sc-split">—</p></div>
-      <div class="wavv-tile"><p class="wavv-tile-label">Answered</p><p class="wavv-tile-value" id="sc-answered">—</p><p class="wavv-scorecard-substats" id="sc-answer-rate">—</p></div>
-      <div class="wavv-tile"><p class="wavv-tile-label">Conversations</p><p class="wavv-tile-value" id="sc-convos">—</p><p class="wavv-scorecard-substats" id="sc-convo-rate">—</p></div>
-      <div class="wavv-tile"><p class="wavv-tile-label">Avg talk time</p><p class="wavv-tile-value" id="sc-avg-talk">—</p></div>
-      <div class="wavv-tile"><p class="wavv-tile-label">Total talk time</p><p class="wavv-tile-value" id="sc-total-talk">—</p></div>
-    </div>
-
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Top dispositions in this range</p>
-    </div>
-    <div id="wavv-scorecard-dispositions"><div class="wavv-empty">No data yet</div></div>
-  </div>
-
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Performance by agent</p>
-    </div>
-    <div class="wavv-perf-controls">
-      <div class="wavv-period-tabs" id="wavv-perf-period-tabs">
-        <button type="button" class="wavv-period-tab" data-period="daily">Daily</button>
-        <button type="button" class="wavv-period-tab active" data-period="weekly">Weekly</button>
-        <button type="button" class="wavv-period-tab" data-period="monthly">Monthly</button>
-        <button type="button" class="wavv-period-tab" data-period="quarterly">Quarterly</button>
+      <div class="wavv-stats" id="wavv-scorecard-stats">
+        <div class="wavv-tile"><p class="wavv-tile-label">Total calls</p><p class="wavv-tile-value" id="sc-total">—</p><p class="wavv-scorecard-substats" id="sc-split">—</p></div>
+        <div class="wavv-tile"><p class="wavv-tile-label">Answered</p><p class="wavv-tile-value" id="sc-answered">—</p><p class="wavv-scorecard-substats" id="sc-answer-rate">—</p></div>
+        <div class="wavv-tile"><p class="wavv-tile-label">Conversations</p><p class="wavv-tile-value" id="sc-convos">—</p><p class="wavv-scorecard-substats" id="sc-convo-rate">—</p></div>
+        <div class="wavv-tile"><p class="wavv-tile-label">Avg talk time</p><p class="wavv-tile-value" id="sc-avg-talk">—</p></div>
+        <div class="wavv-tile"><p class="wavv-tile-label">Total talk time</p><p class="wavv-tile-value" id="sc-total-talk">—</p></div>
       </div>
-      <select class="wavv-agent-filter" id="wavv-perf-agent-select">
-        <option value="">All agents</option>
-      </select>
-    </div>
-    <div class="wavv-table-wrap">
-      <table>
-        <thead>
-          <tr><th>Agent</th><th>Period</th><th>Calls</th><th>Conversations</th><th>Answered</th><th>Talk time</th></tr>
-        </thead>
-        <tbody id="wavv-perf-body"><tr><td colspan="6" class="wavv-empty">No data yet</td></tr></tbody>
-      </table>
+
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Top dispositions in this range</p>
+      </div>
+      <div id="wavv-scorecard-dispositions"><div class="wavv-empty">No data yet</div></div>
     </div>
   </div>
 
-  <div class="wavv-stats" id="wavv-stats">
-    <div class="wavv-tile"><p class="wavv-tile-label">Total calls (14d)</p><p class="wavv-tile-value" id="stat-total">—</p></div>
-    <div class="wavv-tile"><p class="wavv-tile-label">Conversations</p><p class="wavv-tile-value" id="stat-convos">—</p></div>
-    <div class="wavv-tile"><p class="wavv-tile-label">Answered calls</p><p class="wavv-tile-value" id="stat-answered">—</p></div>
-    <div class="wavv-tile"><p class="wavv-tile-label">Total talk time</p><p class="wavv-tile-value" id="stat-talktime">—</p></div>
-  </div>
-
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Week over week</p>
+  <div class="wavv-tab-panel" data-tab-panel="dispositions" hidden>
+    <div class="wavv-card">
+      <div class="wavv-card-head"><p class="wavv-section-title">Talk time (all-time)</p></div>
+      <div class="wavv-ttgrid" id="wavv-talktime-grid"><div class="wavv-empty">No data yet</div></div>
     </div>
-    <div class="wavv-wowgrid" id="wavv-wow-grid"><div class="wavv-empty">No data yet</div></div>
-    <p class="wavv-ttsecondary" style="margin-top:12px;">This week is week-to-date (Monday start), compared against all of last week.</p>
-  </div>
 
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Weekly trend</p>
-      <div class="wavv-legend">
-        <span><i style="background:var(--series-outbound)"></i>Outbound</span>
-        <span><i style="background:var(--series-inbound)"></i>Inbound</span>
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Dispositions (all-time)</p>
+        <button class="wavv-link-btn" id="wavv-dispositions-toggle">View as table</button>
+      </div>
+      <div id="wavv-dispositions-bars"><div class="wavv-empty">No data yet</div></div>
+      <div class="wavv-table-wrap" id="wavv-dispositions-table-wrap" hidden>
+        <table>
+          <thead>
+            <tr><th>Direction</th><th>Disposition</th><th>Calls</th><th>% of direction</th><th>Conversations</th><th>Avg talk</th></tr>
+          </thead>
+          <tbody id="wavv-dispositions-body"><tr><td colspan="6" class="wavv-empty">No data yet</td></tr></tbody>
+        </table>
       </div>
     </div>
-    <div class="wavv-chart" id="wavv-weekly-chart"><div class="wavv-empty">No data yet</div></div>
-  </div>
 
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Last 7 days</p>
-      <div class="wavv-legend">
-        <span><i style="background:var(--series-outbound)"></i>Outbound</span>
-        <span><i style="background:var(--series-inbound)"></i>Inbound</span>
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Daily detail</p>
+        <button class="wavv-link-btn" id="wavv-daily-toggle">Show all</button>
+      </div>
+      <div class="wavv-table-wrap">
+        <table>
+          <thead>
+            <tr><th>Date</th><th>Direction</th><th>Calls</th><th>Conversations</th><th>Answered</th><th>Avg talk</th><th>Total talk</th></tr>
+          </thead>
+          <tbody id="wavv-table-body"><tr><td colspan="7" class="wavv-empty">No data yet</td></tr></tbody>
+        </table>
       </div>
     </div>
-    <div class="wavv-chart" id="wavv-chart"><div class="wavv-empty">No data yet</div></div>
   </div>
 
-  <div class="wavv-card">
-    <div class="wavv-card-head"><p class="wavv-section-title">Talk time (all-time)</p></div>
-    <div class="wavv-ttgrid" id="wavv-talktime-grid"><div class="wavv-empty">No data yet</div></div>
-  </div>
-
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Dispositions (all-time)</p>
-      <button class="wavv-link-btn" id="wavv-dispositions-toggle">View as table</button>
-    </div>
-    <div id="wavv-dispositions-bars"><div class="wavv-empty">No data yet</div></div>
-    <div class="wavv-table-wrap" id="wavv-dispositions-table-wrap" hidden>
-      <table>
-        <thead>
-          <tr><th>Direction</th><th>Disposition</th><th>Calls</th><th>% of direction</th><th>Conversations</th><th>Avg talk</th></tr>
-        </thead>
-        <tbody id="wavv-dispositions-body"><tr><td colspan="6" class="wavv-empty">No data yet</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-
-  <div class="wavv-card">
-    <div class="wavv-card-head">
-      <p class="wavv-section-title">Daily detail</p>
-      <button class="wavv-link-btn" id="wavv-daily-toggle">Show all</button>
-    </div>
-    <div class="wavv-table-wrap">
-      <table>
-        <thead>
-          <tr><th>Date</th><th>Direction</th><th>Calls</th><th>Conversations</th><th>Answered</th><th>Avg talk</th><th>Total talk</th></tr>
-        </thead>
-        <tbody id="wavv-table-body"><tr><td colspan="7" class="wavv-empty">No data yet</td></tr></tbody>
-      </table>
+  <div class="wavv-tab-panel" data-tab-panel="manage" hidden>
+    <div class="wavv-card">
+      <div class="wavv-card-head">
+        <p class="wavv-section-title">Connected dialers</p>
+      </div>
+      <div id="wavv-agents-list"><div class="wavv-empty">Loading…</div></div>
+      <form class="wavv-agent-form" id="wavv-agent-form">
+        <input type="text" id="wavv-agent-name" placeholder="Agent name (e.g. Jordan)" autocomplete="off">
+        <input type="text" id="wavv-agent-npn" placeholder="NPN (optional)" autocomplete="off">
+        <input type="text" id="wavv-agent-key" placeholder="Their WAVV API key" autocomplete="off">
+        <button type="submit" class="wavv-btn" id="wavv-agent-add-btn">Add dialer</button>
+      </form>
+      <p class="wavv-admin-gate" id="wavv-agent-msg">Adding a dialer starts a full history backfill for it automatically.</p>
     </div>
   </div>
 </div>
@@ -1170,7 +1233,7 @@
     root.querySelector("#lb-total-talk").textContent = fmtDuration(totals.total_talk_seconds);
 
     if (!agents.length) {
-      lbPodiumEl.innerHTML = '<div class="wavv-empty">No connected agents yet.</div>';
+      lbPodiumEl.innerHTML = '<div class="wavv-empty">No connected agents yet — add one from the Manage dialers tab.</div>';
       lbListEl.innerHTML = "";
       return;
     }
@@ -1358,6 +1421,26 @@
   dailyToggle.addEventListener("click", function () {
     dailyExpanded = !dailyExpanded;
     renderTable(lastSummary);
+  });
+
+  // Tab navigation: Leaderboard / Overview / Performance / Dispositions /
+  // Manage dialers. Every panel keeps loading on the normal refresh cycle
+  // whether it's the visible one or not -- switching tabs only toggles
+  // display, so no tab ever shows stale or empty data the first time it's
+  // opened.
+  var tabButtons = Array.prototype.slice.call(root.querySelectorAll(".wavv-tab-btn"));
+  var tabPanels = {};
+  Array.prototype.forEach.call(root.querySelectorAll("[data-tab-panel]"), function (p) {
+    tabPanels[p.getAttribute("data-tab-panel")] = p;
+  });
+  function showTab(name) {
+    tabButtons.forEach(function (b) { b.classList.toggle("active", b.getAttribute("data-tab") === name); });
+    Object.keys(tabPanels).forEach(function (k) { tabPanels[k].hidden = k !== name; });
+  }
+  root.querySelector("#wavv-tabnav").addEventListener("click", function (evt) {
+    var btn = evt.target.closest(".wavv-tab-btn");
+    if (!btn) return;
+    showTab(btn.getAttribute("data-tab"));
   });
 
   loadAll();
