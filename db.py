@@ -92,15 +92,15 @@ class Db:
         where = "WHERE active" if active_only else ""
         with self.conn.cursor() as cur:
             cur.execute(
-                f"SELECT id, agent_name, api_key, base_url, active, created_at, "
+                f"SELECT id, agent_name, api_key, base_url, npn, active, created_at, "
                 f"last_synced_at, last_error FROM wavv_agents {where} ORDER BY agent_name"
             )
             rows = cur.fetchall()
         return [
             {
-                "id": str(r[0]), "agent_name": r[1], "api_key": r[2], "base_url": r[3],
-                "active": r[4], "created_at": r[5].isoformat() if r[5] else None,
-                "last_synced_at": r[6].isoformat() if r[6] else None, "last_error": r[7],
+                "id": str(r[0]), "agent_name": r[1], "api_key": r[2], "base_url": r[3], "npn": r[4],
+                "active": r[5], "created_at": r[6].isoformat() if r[6] else None,
+                "last_synced_at": r[7].isoformat() if r[7] else None, "last_error": r[8],
             }
             for r in rows
         ]
@@ -108,7 +108,7 @@ class Db:
     def get_agent(self, agent_id: str) -> Optional[dict]:
         with self.conn.cursor() as cur:
             cur.execute(
-                "SELECT id, agent_name, api_key, base_url, active, created_at, "
+                "SELECT id, agent_name, api_key, base_url, npn, active, created_at, "
                 "last_synced_at, last_error FROM wavv_agents WHERE id = %s",
                 (agent_id,),
             )
@@ -116,23 +116,23 @@ class Db:
         if not r:
             return None
         return {
-            "id": str(r[0]), "agent_name": r[1], "api_key": r[2], "base_url": r[3],
-            "active": r[4], "created_at": r[5].isoformat() if r[5] else None,
-            "last_synced_at": r[6].isoformat() if r[6] else None, "last_error": r[7],
+            "id": str(r[0]), "agent_name": r[1], "api_key": r[2], "base_url": r[3], "npn": r[4],
+            "active": r[5], "created_at": r[6].isoformat() if r[6] else None,
+            "last_synced_at": r[7].isoformat() if r[7] else None, "last_error": r[8],
         }
 
-    def create_agent(self, agent_id: str, agent_name: str, api_key: str, base_url: str) -> None:
+    def create_agent(self, agent_id: str, agent_name: str, api_key: str, base_url: str, npn: Optional[str] = None) -> None:
         with self.conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO wavv_agents (id, agent_name, api_key, base_url) VALUES (%s, %s, %s, %s)",
-                (agent_id, agent_name, api_key, base_url),
+                "INSERT INTO wavv_agents (id, agent_name, api_key, base_url, npn) VALUES (%s, %s, %s, %s, %s)",
+                (agent_id, agent_name, api_key, base_url, npn),
             )
         self.conn.commit()
 
     def update_agent(self, agent_id: str, **fields) -> bool:
         if not fields:
             return False
-        allowed = {"agent_name", "api_key", "base_url", "active"}
+        allowed = {"agent_name", "api_key", "base_url", "npn", "active"}
         cols = [c for c in fields if c in allowed]
         if not cols:
             return False
@@ -142,6 +142,14 @@ class Db:
         with self.conn.cursor() as cur:
             cur.execute(f"UPDATE wavv_agents SET {set_clause} WHERE id = %(id)s", params)
             updated = cur.rowcount > 0
+            # wavv_calls.agent_name is a denormalized copy (so summary/performance
+            # queries don't need a join) -- keep it in sync, or a rename would
+            # leave every call synced before it still labeled with the old name.
+            if updated and "agent_name" in cols:
+                cur.execute(
+                    "UPDATE wavv_calls SET agent_name = %(agent_name)s WHERE agent_id = %(id)s",
+                    params,
+                )
         self.conn.commit()
         return updated
 

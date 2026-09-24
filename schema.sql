@@ -11,11 +11,18 @@ CREATE TABLE IF NOT EXISTS wavv_agents (
     agent_name     TEXT NOT NULL UNIQUE,
     api_key        TEXT NOT NULL,
     base_url       TEXT NOT NULL DEFAULT 'https://api.wavv.com/v3',
+    -- National Producer Number -- an insurance-licensing id, unique per agent.
+    -- Not a credential (unlike api_key), just reference info, so it's shown
+    -- unmasked in the agents list.
+    npn            TEXT,
     active         BOOLEAN NOT NULL DEFAULT TRUE,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     last_synced_at TIMESTAMPTZ,
     last_error     TEXT
 );
+
+-- Migrate a table created before NPN tracking existed.
+ALTER TABLE wavv_agents ADD COLUMN IF NOT EXISTS npn TEXT;
 
 CREATE TABLE IF NOT EXISTS wavv_calls (
     id              UUID PRIMARY KEY,
