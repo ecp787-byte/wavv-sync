@@ -459,7 +459,14 @@
   function api(path, opts) {
     opts = opts || {};
     return fetch(CONFIG.apiBase + path, opts).then(function (res) {
-      if (!res.ok) return res.json().then(function (b) { throw new Error(b.error || res.statusText); });
+      if (!res.ok) {
+        return res.json().catch(function () { return {}; }).then(function (b) {
+          var err = new Error(b.error || res.statusText || ("HTTP " + res.status));
+          err.status = res.status;
+          err.body = b;
+          throw err;
+        });
+      }
       return res.json();
     });
   }
@@ -1105,13 +1112,18 @@
     syncMsg.textContent = runningLabel;
     syncMsg.className = "wavv-sync-msg";
     api(path, { method: "POST", headers: { "X-API-Key": CONFIG.apiKey } })
-      .then(function (res) {
-        if (res.status === "already_running") {
-          syncMsg.textContent = "A job is already running…";
-        }
+      .then(function () {
         pollSyncJob(kindLabel);
       })
       .catch(function (err) {
+        if (err.status === 409) {
+          // Another job (e.g. a newly-added dialer's auto-backfill) is already
+          // running in the background -- not a real failure, just keep watching it.
+          syncMsg.textContent = "A job is already running… watching it finish.";
+          syncMsg.className = "wavv-sync-msg";
+          pollSyncJob(kindLabel);
+          return;
+        }
         syncBtn.disabled = false;
         backfillBtn.disabled = false;
         syncMsg.textContent = "Couldn't start " + kindLabel.toLowerCase() + ": " + err.message;
