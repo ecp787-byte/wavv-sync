@@ -14,11 +14,13 @@ UPSERT_SQL = """
 INSERT INTO wavv_calls (
     id, team_id, campaign_id, direction, phone, caller_id,
     contact_id, contact_name, started_at, answered_at, ended_at,
-    seconds, outcome, disposition, human, note, summary, recorded, synced_at
+    seconds, outcome, disposition, human, note, summary, recorded,
+    agent_id, agent_name, synced_at
 ) VALUES (
     %(id)s, %(teamId)s, %(campaignId)s, %(direction)s, %(phone)s, %(callerId)s,
     %(contactId)s, %(contactName)s, %(startedAt)s, %(answeredAt)s, %(endedAt)s,
-    %(seconds)s, %(outcome)s, %(disposition)s, %(human)s, %(note)s, %(summary)s, %(recorded)s, now()
+    %(seconds)s, %(outcome)s, %(disposition)s, %(human)s, %(note)s, %(summary)s, %(recorded)s,
+    %(agentId)s, %(agentName)s, now()
 )
 ON CONFLICT (id) DO UPDATE SET
     campaign_id  = EXCLUDED.campaign_id,
@@ -36,6 +38,8 @@ ON CONFLICT (id) DO UPDATE SET
     note         = EXCLUDED.note,
     summary      = EXCLUDED.summary,
     recorded     = EXCLUDED.recorded,
+    agent_id     = EXCLUDED.agent_id,
+    agent_name   = EXCLUDED.agent_name,
     synced_at    = now();
 """
 
@@ -79,5 +83,79 @@ class Db:
                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
                 """,
                 (key, value),
+            )
+        self.conn.commit()
+
+    # --- Agents (connected WAVV dialers, one per agent) ---
+
+    def list_agents(self, active_only: bool = False) -> list[dict]:
+        where = "WHERE active" if active_only else ""
+        with self.conn.cursor() as cur:
+            cur.execute(
+                f"SELECT id, agent_name, api_key, base_url, active, created_at, "
+                f"last_synced_at, last_error FROM wavv_agents {where} ORDER BY agent_name"
+            )
+            rows = cur.fetchall()
+        return [
+            {
+                "id": str(r[0]), "agent_name": r[1], "api_key": r[2], "base_url": r[3],
+                "active": r[4], "created_at": r[5].isoformat() if r[5] else None,
+                "last_synced_at": r[6].isoformat() if r[6] else None, "last_error": r[7],
+            }
+            for r in rows
+        ]
+
+    def get_agent(self, agent_id: str) -> Optional[dict]:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, agent_name, api_key, base_url, active, created_at, "
+                "last_synced_at, last_error FROM wavv_agents WHERE id = %s",
+                (agent_id,),
+            )
+            r = cur.fetchone()
+        if not r:
+            return None
+        return {
+            "id": str(r[0]), "agent_name": r[1], "api_key": r[2], "base_url": r[3],
+            "active": r[4], "created_at": r[5].isoformat() if r[5] else None,
+            "last_synced_at": r[6].isoformat() if r[6] else None, "last_error": r[7],
+        }
+
+    def create_agent(self, agent_id: str, agent_name: str, api_key: str, base_url: str) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO wavv_agents (id, agent_name, api_key, base_url) VALUES (%s, %s, %s, %s)",
+                (agent_id, agent_name, api_key, base_url),
+            )
+        self.conn.commit()
+
+    def update_agent(self, agent_id: str, **fields) -> bool:
+        if not fields:
+            return False
+        allowed = {"agent_name", "api_key", "base_url", "active"}
+        cols = [c for c in fields if c in allowed]
+        if not cols:
+            return False
+        set_clause = ", ".join(f"{c} = %({c})s" for c in cols)
+        params = {c: fields[c] for c in cols}
+        params["id"] = agent_id
+        with self.conn.cursor() as cur:
+            cur.execute(f"UPDATE wavv_agents SET {set_clause} WHERE id = %(id)s", params)
+            updated = cur.rowcount > 0
+        self.conn.commit()
+        return updated
+
+    def delete_agent(self, agent_id: str) -> bool:
+        with self.conn.cursor() as cur:
+            cur.execute("DELETE FROM wavv_agents WHERE id = %s", (agent_id,))
+            deleted = cur.rowcount > 0
+        self.conn.commit()
+        return deleted
+
+    def set_agent_sync_result(self, agent_id: str, error: Optional[str]) -> None:
+        with self.conn.cursor() as cur:
+            cur.execute(
+                "UPDATE wavv_agents SET last_synced_at = now(), last_error = %s WHERE id = %s",
+                (error, agent_id),
             )
         self.conn.commit()
