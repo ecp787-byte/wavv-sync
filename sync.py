@@ -162,6 +162,20 @@ def cmd_scorecard(args, cfg):
             print(f"    {d['disposition']:<20} {d['call_count']:>5}  {d['pct_of_total']}%")
 
 
+def cmd_leaderboard(args, cfg):
+    board = core.get_leaderboard(cfg, period=args.period)
+    if not board["agents"]:
+        print("No connected agents yet. Run `python sync.py agents add` first.")
+        return
+    print(f"Leaderboard -- {args.period} (points = appointments×{core.LEADERBOARD_POINTS['appointment']} + "
+          f"conversations×{core.LEADERBOARD_POINTS['conversation']} + calls×{core.LEADERBOARD_POINTS['call_attempt']} + "
+          f"talk_min×{core.LEADERBOARD_POINTS['talk_minute']})")
+    print(f"{'#':>3} {'agent':<20} {'points':>7} {'appts':>6} {'convos':>7} {'calls':>6} {'answered':>9} {'talk_sec':>9}")
+    for r in board["agents"]:
+        print(f"{r['rank']:>3} {r['agent_name']:<20} {r['points']:>7} {r['appointments']:>6} "
+              f"{r['conversations']:>7} {r['call_attempts']:>6} {r['answered_calls']:>9} {r['total_talk_seconds']:>9}")
+
+
 def cmd_summary(args, cfg):
     rows = core.get_summary(cfg)
     if not rows:
@@ -270,6 +284,9 @@ def main():
     p_sc.add_argument("--start", help="YYYY-MM-DD. Defaults to no lower bound.")
     p_sc.add_argument("--end", help="YYYY-MM-DD, inclusive. Defaults to no upper bound.")
 
+    p_lb = sub.add_parser("leaderboard", help="Rank connected agents by weighted points for the current period.")
+    p_lb.add_argument("--period", choices=PERIOD_CHOICES, default="daily")
+
     p_emit = sub.add_parser(
         "emit-sql",
         help="Fetch calls over HTTPS only and write an upsert SQL file, without connecting to Postgres.",
@@ -304,6 +321,7 @@ def main():
             "talktime": cmd_talktime,
             "performance": cmd_performance,
             "scorecard": cmd_scorecard,
+            "leaderboard": cmd_leaderboard,
             "emit-sql": cmd_emit_sql,
         }[args.command](args, cfg)
     except WavvApiError as e:

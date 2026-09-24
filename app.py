@@ -18,6 +18,7 @@ Endpoints:
     GET    /api/agents/performance -> per-agent rollup by period=daily|weekly|monthly|quarterly, optional agent_name filter
     GET    /api/scorecard     -> one agent's (or everyone's) dialing scorecard over an arbitrary
                                   date range: agent_name?, start? (YYYY-MM-DD), end? (YYYY-MM-DD, inclusive)
+    GET    /api/leaderboard   -> agents ranked by weighted points for the current period=daily|weekly|monthly|quarterly
     POST   /api/backfill      -> pull ALL historical calls for every connected dialer (requires X-API-Key header)
     POST   /api/sync          -> on-demand incremental sync for every connected dialer (requires X-API-Key header)
     GET    /api/sync/status   -> status of the most recent manually-triggered sync/backfill job
@@ -178,6 +179,15 @@ def scorecard():
     end = request.args.get("end") or None
     try:
         return jsonify(core.get_scorecard(cfg, agent_name=agent_name, start=start, end=end))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/leaderboard")
+def leaderboard():
+    period = request.args.get("period", default="daily")
+    try:
+        return jsonify(core.get_leaderboard(cfg, period=period))
     except Exception as e:  # noqa: BLE001
         return jsonify({"error": str(e)}), 500
 

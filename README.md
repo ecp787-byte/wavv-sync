@@ -6,7 +6,8 @@ from the WAVV dialer's public API into a Postgres database, and keeps it up to d
 ## What it does
 
 - `wavv_agents` table: one row per connected WAVV dialer, attributed to the agent who
-  owns it. Each agent has their own WAVV API key — add as many as you have agents.
+  owns it. Each agent has their own WAVV API key and an optional NPN (National Producer
+  Number) — add as many as you have agents.
 - `wavv_calls` table: one row per call, mirroring WAVV's `Call` object (direction, phone
   numbers, matched CRM contact, timestamps, talk time in seconds, outcome, disposition,
   human/machine detection, notes, AI summary, whether it was recorded), tagged with the
@@ -48,11 +49,17 @@ from the WAVV dialer's public API into a Postgres database, and keeps it up to d
 
 6. **Connect your dialers, one per agent**
    ```bash
-   python sync.py agents add --name "Jordan" --key "<Jordan's WAVV API key>"
+   python sync.py agents add --name "Jordan" --key "<Jordan's WAVV API key>" --npn "<optional NPN>"
    python sync.py agents add --name "Taylor" --key "<Taylor's WAVV API key>"
-   python sync.py agents list      # see everyone connected
+   python sync.py agents list                        # see everyone connected
+   python sync.py agents edit --id <id> --name "New Name" --npn "12345678"
    python sync.py agents remove --id <id>
    ```
+   `--npn` is optional — it's just a place to keep each agent's National
+   Producer Number alongside their dialer, shown on the dashboard. Renaming an
+   agent (CLI or the dashboard's "Edit" link) relabels their past calls too,
+   so historical rollups always show the current name.
+
    (If you set `WAVV_API_KEY` in `.env` instead — the old single-key setup — it's
    auto-registered as one agent named "Default" the first time the tool runs, so
    existing installs keep working with no manual step.)
@@ -76,6 +83,9 @@ from the WAVV dialer's public API into a Postgres database, and keeps it up to d
    ```bash
    python sync.py summary
    python sync.py weekly           # this week vs last week, plus a weekly rollup
+   python sync.py performance --period monthly --agent "Jordan"   # per-agent, any period
+   python sync.py scorecard --agent "Jordan" --start 2026-01-01 --end 2026-01-31   # one slice's scorecard
+   python sync.py leaderboard --period daily   # rank agents by points for today/week/month/quarter
    python sync.py dispositions
    python sync.py talktime
    ```
@@ -115,9 +125,12 @@ to call:
 | `/api/talktime` | GET | none | avg/median/min/max/total talk time per direction |
 | `/api/agents` | GET | `X-API-Key` header | connected dialers, with masked API keys |
 | `/api/agents` | POST | `X-API-Key` header | connect a new dialer: `{agent_name, api_key, base_url?}` |
-| `/api/agents/<id>` | PATCH | `X-API-Key` header | rename, re-key, or activate/deactivate a dialer |
+| `/api/agents/<id>` | PATCH | `X-API-Key` header | rename, re-key, set NPN, or activate/deactivate a dialer (rename also relabels that agent's past calls) |
 | `/api/agents/<id>` | DELETE | `X-API-Key` header | disconnect a dialer |
 | `/api/agents/summary` | GET | none | per-agent call totals |
+| `/api/agents/performance?period=weekly&agent_name=` | GET | none | per-agent rollup by daily/weekly/monthly/quarterly, optionally filtered to one agent |
+| `/api/scorecard?agent_name=&start=&end=` | GET | none | one agent's (or everyone's) dialing scorecard over any date range: answer rate, conversation rate, talk time, top dispositions |
+| `/api/leaderboard?period=` | GET | none | agents ranked by weighted points (appointments, conversations, talk time, call attempts) for the current daily/weekly/monthly/quarterly period |
 | `/api/backfill` | POST | `X-API-Key` header | pull ALL historical calls for every connected dialer |
 | `/api/sync` | POST | `X-API-Key` header | trigger an on-demand sync (runs in the background; poll `/api/sync/status`) |
 | `/api/sync/status` | GET | none | status of the most recent manual sync/backfill job |
@@ -131,10 +144,15 @@ which keeps handling the reliable hourly schedule):
   front-end's URL, or `*`). `WAVV_API_KEY` is optional — only needed for the legacy
   single-dialer setup described above.
 
-**`webflow-dashboard.html`** is a self-contained dashboard (connected-dialer management,
-stat tiles, week-over-week comparison, a weekly trend chart, a 7-day inbound/outbound
-chart, talk-time stats, a disposition breakdown, a daily detail table, and
-"Backfill"/"Sync now" buttons) meant to be pasted into a Webflow **Embed** element:
+**`webflow-dashboard.html`** is a self-contained dashboard (connected-dialer management
+with inline rename/NPN editing, a "Leaderboard" card with a top-3 podium and a full
+ranked list for today/this week/this month/this quarter, an "Explore & scorecard" card
+that slices any agent over any date range — pick from the dropdown, type dates or click
+a quick preset like 7D/30D/This month/This quarter/YTD — a per-agent
+daily/weekly/monthly/quarterly performance table, stat tiles, week-over-week comparison,
+a weekly trend chart, a 7-day inbound/outbound chart, talk-time stats, a disposition
+breakdown, a daily detail table, and "Backfill"/"Sync now" buttons) meant to be pasted
+into a Webflow **Embed** element:
 1. Deploy `app.py` to Render first and grab its URL.
 2. Open `webflow-dashboard.html`, fill in the two `TODO` values at the top of the
    `<script>` block: `apiBase` (your Render web service URL) and `apiKey` (your
@@ -173,3 +191,9 @@ chart, talk-time stats, a disposition breakdown, a daily detail table, and
 - **Multiple WAVV teams/dialers**: handled natively now — connect one dialer per agent
   with `python sync.py agents add` (or the dashboard's "Connected dialers" card), and
   every call is tagged with both `team_id` (from WAVV) and the agent it came from.
+- **Leaderboard**: ranks connected agents for the current day/week/month/quarter by a
+  weighted points score (appointment-set calls count most, then conversations, then
+  call attempts, then a small talk-time bonus) — built entirely from call data, since
+  WAVV doesn't give us appointments/texts/emails from any other system. See
+  `python sync.py leaderboard --period daily` or the dashboard's "Leaderboard" card.
+  Tune the weights via `LEADERBOARD_POINTS` in `wavv_sync_core.py`.

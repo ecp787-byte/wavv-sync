@@ -355,6 +355,82 @@ def get_agent_performance(cfg: dict, period: str = "weekly", agent_name: str | N
     ]
 
 
+# Weighted "points" formula for the leaderboard, since WAVV's call data has no
+# appointments/texts/emails of its own to draw a score from -- an appointment-set
+# call counts most (the real outcome), then conversations, then a small talk-time
+# bonus, then raw call attempts. Tune these to change how the leaderboard ranks.
+LEADERBOARD_POINTS = {
+    "appointment": 25,
+    "conversation": 5,
+    "call_attempt": 1,
+    "talk_minute": 0.5,
+}
+
+
+def get_leaderboard(cfg: dict, period: str = "daily") -> dict:
+    """Ranks every active connected agent for the current day/week/month/quarter
+    by a weighted points score built from call metrics: appointment-set calls,
+    conversations, answered calls, call attempts, and talk time. Powers the
+    dashboard's Leaderboard card. `period` is one of PERIOD_UNITS' keys and
+    always covers the *current*, still-in-progress bucket (e.g. "today so
+    far"), not a completed period."""
+    unit, _ = PERIOD_UNITS.get(period, PERIOD_UNITS["daily"])
+    db = Db(cfg["database_url"])
+    with db.conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT
+                a.agent_name,
+                COUNT(c.id)                                                AS call_attempts,
+                COUNT(*) FILTER (WHERE c.is_conversation)                  AS conversations,
+                COUNT(*) FILTER (WHERE c.answered_at IS NOT NULL)          AS answered_calls,
+                COUNT(*) FILTER (WHERE c.disposition ILIKE %(appt_like)s)  AS appointments,
+                COALESCE(SUM(c.seconds), 0)                                AS total_talk_seconds
+            FROM wavv_agents a
+            LEFT JOIN wavv_calls c
+                ON c.agent_id = a.id
+               AND date_trunc(%(unit)s, c.started_at) >= date_trunc(%(unit)s, now())
+            WHERE a.active
+            GROUP BY a.agent_name
+            """,
+            {"unit": unit, "appt_like": "appointment set%"},
+        )
+        rows = cur.fetchall()
+    db.close()
+
+    board = []
+    for agent_name, call_attempts, conversations, answered_calls, appointments, total_talk_seconds in rows:
+        points = (
+            appointments * LEADERBOARD_POINTS["appointment"]
+            + conversations * LEADERBOARD_POINTS["conversation"]
+            + call_attempts * LEADERBOARD_POINTS["call_attempt"]
+            + (total_talk_seconds / 60.0) * LEADERBOARD_POINTS["talk_minute"]
+        )
+        board.append(
+            {
+                "agent_name": agent_name,
+                "points": round(points),
+                "appointments": appointments,
+                "conversations": conversations,
+                "call_attempts": call_attempts,
+                "answered_calls": answered_calls,
+                "total_talk_seconds": total_talk_seconds,
+            }
+        )
+    board.sort(key=lambda r: r["points"], reverse=True)
+    for i, r in enumerate(board, start=1):
+        r["rank"] = i
+
+    totals = {
+        "appointments": sum(r["appointments"] for r in board),
+        "conversations": sum(r["conversations"] for r in board),
+        "call_attempts": sum(r["call_attempts"] for r in board),
+        "answered_calls": sum(r["answered_calls"] for r in board),
+        "total_talk_seconds": sum(r["total_talk_seconds"] for r in board),
+    }
+    return {"period": period, "agents": board, "totals": totals, "points_formula": LEADERBOARD_POINTS}
+
+
 def get_summary(cfg: dict, days: int = 14) -> list[dict]:
     db = Db(cfg["database_url"])
     with db.conn.cursor() as cur:

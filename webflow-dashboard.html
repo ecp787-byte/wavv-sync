@@ -248,6 +248,79 @@
       font-size: 12px; font-weight: 600; color: var(--text-secondary); text-transform: none;
       letter-spacing: normal; margin-top: 4px;
     }
+
+    /* Leaderboard: top-3 podium + a ranked list below, by a weighted "points"
+       score built from call metrics (see server-side LEADERBOARD_POINTS) --
+       WAVV's call data has no appointments/texts/emails of its own, so points
+       lean on appointment-set calls, conversations, talk time, and attempts.
+       Avatar colors are just per-agent variety, unrelated to the
+       inbound/outbound categorical colors used elsewhere. */
+    #wavv-dash .wavv-lb-podium {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 12px; margin-bottom: 16px;
+    }
+    #wavv-dash .wavv-lb-podium-card {
+      background: var(--page-plane); border: 1px solid var(--border);
+      border-radius: 10px; padding: 18px 14px; text-align: center;
+    }
+    #wavv-dash .wavv-lb-avatar {
+      width: 52px; height: 52px; border-radius: 50%; margin: 0 auto 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 16px; font-weight: 700; color: #fff; flex: 0 0 auto;
+    }
+    #wavv-dash .wavv-lb-podium-rank {
+      font-size: 11px; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.04em; margin: 0 0 2px;
+    }
+    #wavv-dash .wavv-lb-podium-name {
+      font-size: 14px; font-weight: 600; margin: 0 0 6px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    #wavv-dash .wavv-lb-podium-points {
+      font-size: 26px; font-weight: 700; color: var(--series-outbound);
+      margin: 0 0 8px; font-variant-numeric: tabular-nums;
+    }
+    #wavv-dash .wavv-lb-podium-icons {
+      font-size: 11px; color: var(--text-secondary);
+      display: flex; justify-content: center; gap: 10px; flex-wrap: wrap;
+    }
+    #wavv-dash .wavv-lb-row {
+      display: flex; align-items: center; gap: 12px; padding: 10px 0;
+      border-bottom: 1px solid var(--gridline);
+    }
+    #wavv-dash .wavv-lb-row:last-child { border-bottom: none; }
+    #wavv-dash .wavv-lb-row-avatar {
+      width: 34px; height: 34px; border-radius: 50%; flex: 0 0 auto;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 12px; font-weight: 700; color: #fff;
+    }
+    #wavv-dash .wavv-lb-row-main { flex: 1; min-width: 0; }
+    #wavv-dash .wavv-lb-row-top {
+      display: flex; align-items: baseline; justify-content: space-between;
+      gap: 8px; margin-bottom: 4px;
+    }
+    #wavv-dash .wavv-lb-row-rank { color: var(--text-muted); font-weight: 600; margin-right: 4px; }
+    #wavv-dash .wavv-lb-row-name {
+      font-size: 13.5px; font-weight: 600; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap;
+    }
+    #wavv-dash .wavv-lb-row-points {
+      font-size: 12.5px; font-weight: 700; color: var(--series-outbound);
+      white-space: nowrap; font-variant-numeric: tabular-nums;
+    }
+    #wavv-dash .wavv-lb-row-track {
+      background: var(--gridline); border-radius: 4px; height: 8px;
+      overflow: hidden; margin-bottom: 6px;
+    }
+    #wavv-dash .wavv-lb-row-fill {
+      height: 100%; border-radius: 4px; min-width: 3px; background: var(--series-outbound);
+    }
+    #wavv-dash .wavv-lb-row-icons {
+      font-size: 11.5px; color: var(--text-secondary); display: flex; gap: 12px; flex-wrap: wrap;
+    }
+    #wavv-dash .wavv-lb-formula {
+      font-size: 11.5px; color: var(--text-muted); margin: 14px 0 0;
+    }
   </style>
 
   <h2>WAVV Call Sync</h2>
@@ -271,6 +344,31 @@
       <button type="submit" class="wavv-btn" id="wavv-agent-add-btn">Add dialer</button>
     </form>
     <p class="wavv-admin-gate" id="wavv-agent-msg">Adding a dialer starts a full history backfill for it automatically.</p>
+  </div>
+
+  <div class="wavv-card">
+    <div class="wavv-card-head">
+      <p class="wavv-section-title">Leaderboard</p>
+      <div class="wavv-period-tabs" id="wavv-lb-period-tabs">
+        <button type="button" class="wavv-period-tab active" data-period="daily">Today</button>
+        <button type="button" class="wavv-period-tab" data-period="weekly">This week</button>
+        <button type="button" class="wavv-period-tab" data-period="monthly">This month</button>
+        <button type="button" class="wavv-period-tab" data-period="quarterly">This quarter</button>
+      </div>
+    </div>
+
+    <div class="wavv-lb-podium" id="wavv-lb-podium"><div class="wavv-empty">Loading…</div></div>
+
+    <div class="wavv-stats" id="wavv-lb-totals">
+      <div class="wavv-tile"><p class="wavv-tile-label">Appointments</p><p class="wavv-tile-value" id="lb-total-appts">—</p></div>
+      <div class="wavv-tile"><p class="wavv-tile-label">Conversations</p><p class="wavv-tile-value" id="lb-total-convos">—</p></div>
+      <div class="wavv-tile"><p class="wavv-tile-label">Call attempts</p><p class="wavv-tile-value" id="lb-total-calls">—</p></div>
+      <div class="wavv-tile"><p class="wavv-tile-label">Answered</p><p class="wavv-tile-value" id="lb-total-answered">—</p></div>
+      <div class="wavv-tile"><p class="wavv-tile-label">Talk time</p><p class="wavv-tile-value" id="lb-total-talk">—</p></div>
+    </div>
+
+    <div id="wavv-lb-list"><div class="wavv-empty">No data yet</div></div>
+    <p class="wavv-lb-formula">Points = appointments×25 + conversations×5 + call attempts×1 + talk minutes×0.5 — built from call data only.</p>
   </div>
 
   <div class="wavv-card">
@@ -443,6 +541,23 @@
     var m = Math.floor(s / 60);
     var rem = s % 60;
     return m + ":" + (rem < 10 ? "0" : "") + rem;
+  }
+
+  // Per-agent avatar color, purely for visual variety on the leaderboard --
+  // unrelated to the inbound/outbound categorical colors used elsewhere.
+  var AVATAR_COLORS = ["#6366f1", "#ec4899", "#f59e0b", "#10b981", "#14b8a6", "#8b5cf6", "#f43f5e", "#0ea5e9"];
+  function avatarColor(name) {
+    var s = name || "?";
+    var hash = 0;
+    for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) >>> 0;
+    return AVATAR_COLORS[hash % AVATAR_COLORS.length];
+  }
+  function initials(name) {
+    if (!name) return "?";
+    var parts = name.trim().split(/\s+/);
+    var a = parts[0].charAt(0) || "";
+    var b = parts.length > 1 ? parts[parts.length - 1].charAt(0) : "";
+    return (a + b).toUpperCase() || "?";
   }
 
   function timeAgo(iso) {
@@ -1028,6 +1143,95 @@
     }).join("");
   }
 
+  // Leaderboard: a period toggle (daily = "today" through quarterly = "this
+  // quarter") re-querying /api/leaderboard, rendered as a top-3 podium plus a
+  // ranked list of everyone else, both scaled to the top scorer's points.
+  var currentLbPeriod = "daily";
+  var lbPeriodTabsEl = root.querySelector("#wavv-lb-period-tabs");
+  var lbPodiumEl = root.querySelector("#wavv-lb-podium");
+  var lbListEl = root.querySelector("#wavv-lb-list");
+
+  function lbIconsHtml(r) {
+    return (
+      '<span title="Appointments set">📅 ' + r.appointments + "</span>" +
+      '<span title="Conversations">💬 ' + r.conversations + "</span>" +
+      '<span title="Call attempts">📞 ' + r.call_attempts + "</span>" +
+      '<span title="Talk time">⏱ ' + fmtDuration(r.total_talk_seconds) + "</span>"
+    );
+  }
+
+  function renderLeaderboard(data) {
+    var agents = data.agents || [];
+    var totals = data.totals || {};
+    root.querySelector("#lb-total-appts").textContent = totals.appointments || 0;
+    root.querySelector("#lb-total-convos").textContent = totals.conversations || 0;
+    root.querySelector("#lb-total-calls").textContent = totals.call_attempts || 0;
+    root.querySelector("#lb-total-answered").textContent = totals.answered_calls || 0;
+    root.querySelector("#lb-total-talk").textContent = fmtDuration(totals.total_talk_seconds);
+
+    if (!agents.length) {
+      lbPodiumEl.innerHTML = '<div class="wavv-empty">No connected agents yet.</div>';
+      lbListEl.innerHTML = "";
+      return;
+    }
+
+    var top3 = agents.slice(0, 3);
+    var rest = agents.slice(3);
+    var maxPoints = agents[0].points || 1;
+
+    lbPodiumEl.innerHTML = top3.map(function (r) {
+      return (
+        '<div class="wavv-lb-podium-card">' +
+          '<div class="wavv-lb-avatar" style="background:' + avatarColor(r.agent_name) + '">' + escapeHtml(initials(r.agent_name)) + "</div>" +
+          '<p class="wavv-lb-podium-rank">#' + r.rank + "</p>" +
+          '<p class="wavv-lb-podium-name" title="' + escapeHtml(r.agent_name) + '">' + escapeHtml(r.agent_name) + "</p>" +
+          '<p class="wavv-lb-podium-points">' + r.points + "</p>" +
+          '<div class="wavv-lb-podium-icons">' + lbIconsHtml(r) + "</div>" +
+        "</div>"
+      );
+    }).join("");
+
+    if (!rest.length) {
+      lbListEl.innerHTML = "";
+      return;
+    }
+    lbListEl.innerHTML = rest.map(function (r) {
+      var pct = maxPoints ? Math.max(3, Math.round((r.points / maxPoints) * 100)) : 3;
+      return (
+        '<div class="wavv-lb-row">' +
+          '<div class="wavv-lb-row-avatar" style="background:' + avatarColor(r.agent_name) + '">' + escapeHtml(initials(r.agent_name)) + "</div>" +
+          '<div class="wavv-lb-row-main">' +
+            '<div class="wavv-lb-row-top">' +
+              '<span class="wavv-lb-row-name"><span class="wavv-lb-row-rank">#' + r.rank + "</span>" + escapeHtml(r.agent_name) + "</span>" +
+              '<span class="wavv-lb-row-points">' + r.points + "</span>" +
+            "</div>" +
+            '<div class="wavv-lb-row-track"><div class="wavv-lb-row-fill" style="width:' + pct + '%"></div></div>' +
+            '<div class="wavv-lb-row-icons">' + lbIconsHtml(r) + "</div>" +
+          "</div>" +
+        "</div>"
+      );
+    }).join("");
+  }
+
+  function loadLeaderboard() {
+    api("/api/leaderboard?period=" + currentLbPeriod)
+      .then(renderLeaderboard)
+      .catch(function (err) {
+        lbPodiumEl.innerHTML = '<div class="wavv-empty">Couldn\'t load leaderboard: ' + err.message + "</div>";
+        lbListEl.innerHTML = "";
+      });
+  }
+
+  lbPeriodTabsEl.addEventListener("click", function (evt) {
+    var btn = evt.target.closest(".wavv-period-tab");
+    if (!btn) return;
+    currentLbPeriod = btn.getAttribute("data-period");
+    Array.prototype.forEach.call(lbPeriodTabsEl.querySelectorAll(".wavv-period-tab"), function (b) {
+      b.classList.toggle("active", b === btn);
+    });
+    loadLeaderboard();
+  });
+
   function loadScorecard() {
     var agentName = exploreAgentSelect.value;
     var start = exploreStartInput.value;
@@ -1083,6 +1287,7 @@
     loadAgents();
     loadAgentPerformance();
     loadScorecard();
+    loadLeaderboard();
   }
 
   function pollSyncJob(kindLabel) {
