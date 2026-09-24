@@ -224,9 +224,10 @@ def list_agents(cfg: dict, reveal_key: bool = False) -> list[dict]:
     return agents
 
 
-def create_agent(cfg: dict, agent_name: str, api_key: str, base_url: str | None = None) -> dict:
+def create_agent(cfg: dict, agent_name: str, api_key: str, base_url: str | None = None, npn: str | None = None) -> dict:
     agent_name = (agent_name or "").strip()
     api_key = (api_key or "").strip()
+    npn = (npn or "").strip() or None
     if not agent_name:
         raise ValueError("agent_name is required")
     if not api_key:
@@ -234,7 +235,7 @@ def create_agent(cfg: dict, agent_name: str, api_key: str, base_url: str | None 
     db = Db(cfg["database_url"])
     db.ensure_schema()
     agent_id = str(uuid.uuid4())
-    db.create_agent(agent_id, agent_name, api_key, base_url or cfg["base_url"])
+    db.create_agent(agent_id, agent_name, api_key, base_url or cfg["base_url"], npn)
     agent = db.get_agent(agent_id)
     db.close()
     agent["api_key"] = _mask_key(agent["api_key"])
@@ -294,6 +295,61 @@ def get_agent_summary(cfg: dict) -> list[dict]:
             "answered_calls": r[3],
             "total_talk_seconds": r[4],
             "last_call_at": r[5].isoformat() if r[5] else None,
+        }
+        for r in rows
+    ]
+
+
+# period label -> (date_trunc unit, one-step interval used to compute the cutoff).
+# Postgres INTERVAL doesn't have a "quarter" unit, so quarterly steps by 3 months.
+PERIOD_UNITS = {
+    "daily": ("day", "1 day"),
+    "weekly": ("week", "1 week"),
+    "monthly": ("month", "1 month"),
+    "quarterly": ("quarter", "3 months"),
+}
+
+
+def get_agent_performance(cfg: dict, period: str = "weekly", agent_name: str | None = None, limit: int = 12) -> list[dict]:
+    """Per-agent rollup bucketed by day/week/month/quarter, most recent `limit`
+    buckets. Powers the dashboard's "Performance by agent" card so results can
+    be sliced daily, weekly, monthly, or quarterly and filtered to one agent."""
+    unit, step = PERIOD_UNITS.get(period, PERIOD_UNITS["weekly"])
+    db = Db(cfg["database_url"])
+    params = {"unit": unit, "step": step, "n": max(1, limit) - 1}
+    agent_filter = ""
+    if agent_name:
+        agent_filter = "AND agent_name = %(agent_name)s"
+        params["agent_name"] = agent_name
+    with db.conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT
+                COALESCE(agent_name, '(unassigned)')            AS agent_name,
+                date_trunc(%(unit)s, started_at)                AS period_start,
+                COUNT(*)                                         AS total_calls,
+                COUNT(*) FILTER (WHERE is_conversation)          AS conversations,
+                COUNT(*) FILTER (WHERE answered_at IS NOT NULL)  AS answered_calls,
+                SUM(seconds)                                     AS total_talk_seconds
+            FROM wavv_calls
+            WHERE date_trunc(%(unit)s, started_at) >=
+                  date_trunc(%(unit)s, now()) - (%(step)s::interval * %(n)s)
+            {agent_filter}
+            GROUP BY 1, 2
+            ORDER BY 2 DESC, 1
+            """,
+            params,
+        )
+        rows = cur.fetchall()
+    db.close()
+    return [
+        {
+            "agent_name": r[0],
+            "period_start": r[1].isoformat(),
+            "total_calls": r[2],
+            "conversations": r[3],
+            "answered_calls": r[4],
+            "total_talk_seconds": r[5] or 0,
         }
         for r in rows
     ]
@@ -394,6 +450,79 @@ def get_week_over_week(cfg: dict) -> dict:
         for k in ("total_calls", "conversations", "answered_calls", "total_talk_seconds")
     }
     return {"this_week": this_week, "last_week": last_week, "deltas_pct": deltas}
+
+
+# Shared WHERE clause for get_scorecard's two queries: an ad-hoc slice by
+# agent and/or arbitrary date range, for the dashboard's "Explore" filter bar.
+# `end` is treated as inclusive of that whole calendar day.
+_SCORECARD_WHERE = """
+    WHERE (%(agent_name)s IS NULL OR agent_name = %(agent_name)s)
+      AND (%(start)s IS NULL OR started_at >= %(start)s::date)
+      AND (%(end)s IS NULL OR started_at < (%(end)s::date + interval '1 day'))
+"""
+
+
+def get_scorecard(cfg: dict, agent_name: str | None = None, start: str | None = None, end: str | None = None) -> dict:
+    """One agent's (or everyone's) dialing scorecard over an arbitrary date
+    range: headline rates plus a top-dispositions breakdown for that slice.
+    `start`/`end` are 'YYYY-MM-DD' strings or None for no bound."""
+    db = Db(cfg["database_url"])
+    params = {"agent_name": agent_name or None, "start": start or None, "end": end or None}
+    with db.conn.cursor() as cur:
+        cur.execute(
+            f"""
+            SELECT
+                COUNT(*),
+                COUNT(*) FILTER (WHERE direction = 'outbound'),
+                COUNT(*) FILTER (WHERE direction = 'inbound'),
+                COUNT(*) FILTER (WHERE answered_at IS NOT NULL),
+                COUNT(*) FILTER (WHERE is_conversation),
+                ROUND(AVG(seconds) FILTER (WHERE seconds IS NOT NULL), 1),
+                SUM(seconds)
+            FROM wavv_calls
+            {_SCORECARD_WHERE}
+            """,
+            params,
+        )
+        total, outbound, inbound, answered, conversations, avg_seconds, total_seconds = cur.fetchone()
+
+        cur.execute(
+            f"""
+            SELECT COALESCE(disposition, '(none)') AS disposition, COUNT(*) AS call_count
+            FROM wavv_calls
+            {_SCORECARD_WHERE}
+            GROUP BY 1
+            ORDER BY call_count DESC
+            LIMIT 8
+            """,
+            params,
+        )
+        disposition_rows = cur.fetchall()
+    db.close()
+
+    total = total or 0
+    return {
+        "agent_name": agent_name,
+        "start": start,
+        "end": end,
+        "total_calls": total,
+        "outbound_calls": outbound or 0,
+        "inbound_calls": inbound or 0,
+        "answered_calls": answered or 0,
+        "answer_rate_pct": round(100.0 * (answered or 0) / total, 1) if total else None,
+        "conversations": conversations or 0,
+        "conversation_rate_pct": round(100.0 * (conversations or 0) / total, 1) if total else None,
+        "avg_talk_seconds": float(avg_seconds) if avg_seconds is not None else None,
+        "total_talk_seconds": total_seconds or 0,
+        "top_dispositions": [
+            {
+                "disposition": d,
+                "call_count": c,
+                "pct_of_total": round(100.0 * c / total, 1) if total else None,
+            }
+            for d, c in disposition_rows
+        ],
+    }
 
 
 def get_dispositions(cfg: dict) -> list[dict]:

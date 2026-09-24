@@ -11,6 +11,16 @@ Commands:
     python sync.py summary                        Print a quick daily rollup from wavv_daily_summary.
     python sync.py dispositions                   Print call counts/talk time by disposition.
     python sync.py talktime                       Print avg/median/min/max talk time per direction.
+    python sync.py performance --period weekly    Per-agent rollup: daily/weekly/monthly/quarterly,
+                                                    optionally --agent "<name>" to filter to one agent.
+    python sync.py scorecard --agent "<name>" \
+        --start 2026-01-01 --end 2026-01-31        One agent's (or everyone's) scorecard over any
+                                                    date range: answer rate, conversation rate, talk
+                                                    time, top dispositions. All flags optional.
+    python sync.py agents list                    List connected dialers (name, NPN, masked key).
+    python sync.py agents add --name .. --key ..  Connect a new dialer (--npn optional).
+    python sync.py agents edit --id .. --name ..  Rename/re-key a dialer or set its NPN.
+    python sync.py agents remove --id ..          Disconnect a dialer.
     python sync.py emit-sql --since 90d --out f    Fetch over HTTPS only, write upsert SQL to a file
                                                     (for environments without a direct Postgres connection).
 
@@ -91,20 +101,65 @@ def cmd_agents_list(args, cfg):
     if not agents:
         print("No dialers connected yet. Add one with `python sync.py agents add --name <agent> --key <api key>`.")
         return
-    print(f"{'name':<20} {'api key':<18} {'active':<7} {'last synced':<26} last error")
+    print(f"{'name':<20} {'npn':<12} {'api key':<18} {'active':<7} {'last synced':<26} last error")
     for a in agents:
-        print(f"{a['agent_name']:<20} {a['api_key']:<18} {str(a['active']):<7} "
+        print(f"{a['agent_name']:<20} {a['npn'] or '':<12} {a['api_key']:<18} {str(a['active']):<7} "
               f"{str(a['last_synced_at']):<26} {a['last_error'] or ''}")
 
 
 def cmd_agents_add(args, cfg):
-    agent = core.create_agent(cfg, args.name, args.key, args.base_url)
+    agent = core.create_agent(cfg, args.name, args.key, args.base_url, args.npn)
     print(f"Added dialer '{agent['agent_name']}' (id {agent['id']}). Run `python sync.py backfill` to pull its history.")
 
 
 def cmd_agents_remove(args, cfg):
     ok = core.delete_agent(cfg, args.id)
     print("Removed." if ok else "No dialer found with that id. Run `python sync.py agents list` to see ids.")
+
+
+def cmd_agents_edit(args, cfg):
+    fields = {}
+    if args.name is not None:
+        fields["agent_name"] = args.name
+    if args.npn is not None:
+        fields["npn"] = args.npn
+    if args.key is not None:
+        fields["api_key"] = args.key
+    if not fields:
+        print("Nothing to update -- pass --name, --npn, and/or --key.")
+        return
+    ok = core.update_agent(cfg, args.id, **fields)
+    print("Updated." if ok else "No dialer found with that id. Run `python sync.py agents list` to see ids.")
+
+
+PERIOD_CHOICES = ("daily", "weekly", "monthly", "quarterly")
+
+
+def cmd_performance(args, cfg):
+    rows = core.get_agent_performance(cfg, period=args.period, agent_name=args.agent, limit=args.limit)
+    if not rows:
+        print("No data yet. Run `python sync.py backfill` first.")
+        return
+    print(f"{'agent':<20} {'period start':<22} {'calls':>6} {'convos':>7} {'answered':>9} {'talk_sec':>9}")
+    for r in rows:
+        print(f"{r['agent_name']:<20} {r['period_start']:<22} {r['total_calls']:>6} "
+              f"{r['conversations']:>7} {r['answered_calls']:>9} {r['total_talk_seconds']:>9}")
+
+
+def cmd_scorecard(args, cfg):
+    sc = core.get_scorecard(cfg, agent_name=args.agent, start=args.start, end=args.end)
+    label = sc["agent_name"] or "All agents"
+    range_label = f"{sc['start'] or '…'} to {sc['end'] or '…'}" if (sc["start"] or sc["end"]) else "all time"
+    print(f"{label} · {range_label}")
+    print(f"  Total calls:   {sc['total_calls']} (outbound {sc['outbound_calls']} / inbound {sc['inbound_calls']})")
+    print(f"  Answered:      {sc['answered_calls']} ({sc['answer_rate_pct']}%)")
+    print(f"  Conversations: {sc['conversations']} ({sc['conversation_rate_pct']}%)")
+    avg = f"{sc['avg_talk_seconds']}s" if sc["avg_talk_seconds"] is not None else "—"
+    print(f"  Avg talk:      {avg}    Total talk: {sc['total_talk_seconds']}s")
+    if sc["top_dispositions"]:
+        print("  Top dispositions:")
+        for d in sc["top_dispositions"]:
+            print(f"    {d['disposition']:<20} {d['call_count']:>5}  {d['pct_of_total']}%")
 
 
 def cmd_summary(args, cfg):
@@ -195,9 +250,25 @@ def main():
     p_agents_add = agents_sub.add_parser("add", help="Connect a new dialer.")
     p_agents_add.add_argument("--name", required=True, help="Agent name to attribute this dialer's calls to.")
     p_agents_add.add_argument("--key", required=True, help="That agent's WAVV API key.")
+    p_agents_add.add_argument("--npn", help="That agent's National Producer Number (optional).")
     p_agents_add.add_argument("--base-url", dest="base_url", help="Defaults to WAVV_BASE_URL / https://api.wavv.com/v3.")
     p_agents_remove = agents_sub.add_parser("remove", help="Disconnect a dialer.")
     p_agents_remove.add_argument("--id", required=True, help="The dialer's id, from `agents list`.")
+    p_agents_edit = agents_sub.add_parser("edit", help="Rename a dialer, update its NPN, or re-key it.")
+    p_agents_edit.add_argument("--id", required=True, help="The dialer's id, from `agents list`.")
+    p_agents_edit.add_argument("--name", help="New agent name.")
+    p_agents_edit.add_argument("--npn", help="New National Producer Number.")
+    p_agents_edit.add_argument("--key", help="New WAVV API key.")
+
+    p_perf = sub.add_parser("performance", help="Per-agent rollup by period (daily/weekly/monthly/quarterly).")
+    p_perf.add_argument("--period", choices=PERIOD_CHOICES, default="weekly")
+    p_perf.add_argument("--agent", help="Filter to one agent's name (default: all agents).")
+    p_perf.add_argument("--limit", type=int, default=12, help="How many periods back to show (default 12).")
+
+    p_sc = sub.add_parser("scorecard", help="One agent's (or everyone's) dialing scorecard over a date range.")
+    p_sc.add_argument("--agent", help="Filter to one agent's name (default: all agents).")
+    p_sc.add_argument("--start", help="YYYY-MM-DD. Defaults to no lower bound.")
+    p_sc.add_argument("--end", help="YYYY-MM-DD, inclusive. Defaults to no upper bound.")
 
     p_emit = sub.add_parser(
         "emit-sql",
@@ -216,6 +287,7 @@ def main():
                 "list": cmd_agents_list,
                 "add": cmd_agents_add,
                 "remove": cmd_agents_remove,
+                "edit": cmd_agents_edit,
             }[args.agents_command](args, cfg)
         except WavvApiError as e:
             sys.exit(f"WAVV API error: {e}")
@@ -230,6 +302,8 @@ def main():
             "weekly": cmd_weekly,
             "dispositions": cmd_dispositions,
             "talktime": cmd_talktime,
+            "performance": cmd_performance,
+            "scorecard": cmd_scorecard,
             "emit-sql": cmd_emit_sql,
         }[args.command](args, cfg)
     except WavvApiError as e:

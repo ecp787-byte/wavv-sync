@@ -11,10 +11,13 @@ Endpoints:
     GET    /api/dispositions  -> call counts/talk time broken down by disposition, per direction
     GET    /api/talktime      -> avg/median/min/max/total talk time per direction
     GET    /api/agents        -> connected dialers, with masked API keys (requires X-API-Key header)
-    POST   /api/agents        -> connect a new dialer: {agent_name, api_key, base_url?} (requires X-API-Key header)
-    PATCH  /api/agents/<id>   -> rename or activate/deactivate a dialer (requires X-API-Key header)
+    POST   /api/agents        -> connect a new dialer: {agent_name, api_key, base_url?, npn?} (requires X-API-Key header)
+    PATCH  /api/agents/<id>   -> rename, re-key, set NPN, or activate/deactivate a dialer (requires X-API-Key header)
     DELETE /api/agents/<id>   -> disconnect a dialer (requires X-API-Key header)
     GET    /api/agents/summary-> per-agent call totals (which agent's dialer produced what)
+    GET    /api/agents/performance -> per-agent rollup by period=daily|weekly|monthly|quarterly, optional agent_name filter
+    GET    /api/scorecard     -> one agent's (or everyone's) dialing scorecard over an arbitrary
+                                  date range: agent_name?, start? (YYYY-MM-DD), end? (YYYY-MM-DD, inclusive)
     POST   /api/backfill      -> pull ALL historical calls for every connected dialer (requires X-API-Key header)
     POST   /api/sync          -> on-demand incremental sync for every connected dialer (requires X-API-Key header)
     GET    /api/sync/status   -> status of the most recent manually-triggered sync/backfill job
@@ -157,6 +160,28 @@ def agents_summary():
         return jsonify({"error": str(e)}), 500
 
 
+@app.get("/api/agents/performance")
+def agents_performance():
+    period = request.args.get("period", default="weekly")
+    agent_name = request.args.get("agent_name") or None
+    limit = request.args.get("limit", default=12, type=int)
+    try:
+        return jsonify(core.get_agent_performance(cfg, period=period, agent_name=agent_name, limit=limit))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
+@app.get("/api/scorecard")
+def scorecard():
+    agent_name = request.args.get("agent_name") or None
+    start = request.args.get("start") or None
+    end = request.args.get("end") or None
+    try:
+        return jsonify(core.get_scorecard(cfg, agent_name=agent_name, start=start, end=end))
+    except Exception as e:  # noqa: BLE001
+        return jsonify({"error": str(e)}), 500
+
+
 def _admin_authorized() -> bool:
     provided_key = request.headers.get("X-API-Key", "")
     return bool(cfg["sync_api_key"]) and provided_key == cfg["sync_api_key"]
@@ -182,7 +207,9 @@ def add_agent():
         return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
     try:
-        agent = core.create_agent(cfg, body.get("agent_name"), body.get("api_key"), body.get("base_url"))
+        agent = core.create_agent(
+            cfg, body.get("agent_name"), body.get("api_key"), body.get("base_url"), body.get("npn")
+        )
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     except Exception as e:  # noqa: BLE001 - e.g. duplicate agent_name (unique constraint)
@@ -204,7 +231,7 @@ def edit_agent(agent_id):
     if not _admin_authorized():
         return jsonify({"error": "unauthorized"}), 401
     body = request.get_json(silent=True) or {}
-    fields = {k: v for k, v in body.items() if k in ("agent_name", "api_key", "base_url", "active")}
+    fields = {k: v for k, v in body.items() if k in ("agent_name", "api_key", "base_url", "npn", "active")}
     if not fields:
         return jsonify({"error": "no updatable fields provided"}), 400
     try:
