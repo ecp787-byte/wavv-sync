@@ -109,7 +109,7 @@ GROUP BY 1;
 SELECT * FROM wavv_calls WHERE contact_id = 'ghl-99213' ORDER BY started_at DESC;
 ```
 
-## Front-end dashboard + manual trigger (Webflow or anywhere else)
+## Front-end dashboard + manual trigger
 
 `app.py` is a small web API that sits in front of the same sync logic, for a front-end
 to call:
@@ -144,24 +144,34 @@ which keeps handling the reliable hourly schedule):
   front-end's URL, or `*`). `WAVV_API_KEY` is optional — only needed for the legacy
   single-dialer setup described above.
 
-**`webflow-dashboard.html`** is a self-contained dashboard (connected-dialer management
-with inline rename/NPN editing, a "Leaderboard" card with a top-3 podium and a full
-ranked list for today/this week/this month/this quarter, an "Explore & scorecard" card
-that slices any agent over any date range — pick from the dropdown, type dates or click
-a quick preset like 7D/30D/This month/This quarter/YTD — a per-agent
-daily/weekly/monthly/quarterly performance table, stat tiles, week-over-week comparison,
-a weekly trend chart, a 7-day inbound/outbound chart, talk-time stats, a disposition
-breakdown, a daily detail table, and "Backfill"/"Sync now" buttons) meant to be pasted
-into a Webflow **Embed** element:
+**`webflow-dashboard.html`** is a self-contained, full-page dark dashboard: a fixed
+left sidebar (Overview / Leaderboard / Agent performance / Dispositions / Manage
+dialers) plus a top bar with "Sync now" / "Backfill" buttons. It's meant to be the
+*only* content on its page, not a small embedded widget — Overview has a greeting
+banner, a "needs your attention" panel for dialers with sync errors, KPI tiles
+(calls today, today's leader, answer rate, total talk time), a "Production over time"
+chart plus a "Where you stand" mini-leaderboard, and week-over-week/7-day trend
+charts. The other tabs hold: connected-dialer management with inline rename/NPN
+editing; a "Leaderboard" tab with a top-3 podium and full ranked list for
+today/this week/this month/this quarter; an "Explore & scorecard" section that
+slices any agent over any date range (dropdown, typed dates, or quick presets like
+7D/30D/This month/This quarter/YTD); a per-agent daily/weekly/monthly/quarterly
+performance table; talk-time stats; a disposition breakdown; and a daily detail table.
+
+The easiest way to run it is to just deploy `app.py` to Render and open its root URL
+(`/`) — the page auto-fills its own API base and key from the server's env vars, no
+editing required. To host it yourself instead (e.g. on your own domain, or as a
+Webflow page's sole content via an Embed element that fills the whole page):
 1. Deploy `app.py` to Render first and grab its URL.
 2. Open `webflow-dashboard.html`, fill in the two `TODO` values at the top of the
    `<script>` block: `apiBase` (your Render web service URL) and `apiKey` (your
    `SYNC_API_KEY` — this same key is reused to manage connected dialers from the page).
-3. In Webflow: add an **Embed** element to a page, paste the whole file's contents in,
-   publish.
+3. Publish it as the entire content of its own page (it renders its own sidebar/top
+   bar chrome, so it shouldn't be dropped into a page that already has other
+   navigation around it).
 4. Note: the API key ships in the page's client-side JS, so anyone who views source
-   can see it — fine for a low-stakes internal tool, but consider Webflow's page
-   password-protection (paid plans) if you want it locked down further.
+   can see it — fine for a low-stakes internal tool, but consider password-protecting
+   that page if you want it locked down further.
 
 ## Files
 
@@ -173,7 +183,7 @@ into a Webflow **Embed** element:
 | `schema.sql`             | Table/view DDL — safe to re-run.                                 |
 | `sync.py`                | CLI: `init`, `backfill`, `sync`, `summary`, `weekly`, `dispositions`, `talktime`, `agents`, `emit-sql`. |
 | `app.py`                 | Web API (Flask) for a front-end: status, summary, dialer management, manual trigger. |
-| `webflow-dashboard.html` | Paste-in dashboard for a Webflow Embed element.                  |
+| `webflow-dashboard.html` | Self-contained full-page dark dashboard (sidebar nav + top bar).  |
 | `.env.example`           | Copy to `.env` and fill in your credentials.                     |
 
 ## Notes / things you may want to extend later

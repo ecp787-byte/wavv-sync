@@ -50,8 +50,9 @@ _DASHBOARD_PATH = os.path.join(os.path.dirname(__file__), "webflow-dashboard.htm
 
 @app.get("/")
 def dashboard():
-    """Serve the same dashboard used in Webflow, self-configured for same-origin use.
-    Handy for checking the tool works before wiring it into a Webflow Embed element.
+    """Serve the full-page dashboard, self-configured for same-origin use.
+    This is a standalone dark full-bleed page (sidebar nav + top bar), meant to be
+    the only content on its page -- not a Webflow Embed fragment.
     """
     try:
         with open(_DASHBOARD_PATH) as f:
@@ -64,8 +65,8 @@ def dashboard():
     page = (
         "<!doctype html><html><head><meta charset='utf-8'>"
         "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-        "<title>WAVV Call Sync</title></head><body style='margin:0;padding:24px;"
-        "background:#f9f9f7;min-height:100vh;'>" + fragment + "</body></html>"
+        "<title>WAVV Call Sync</title></head><body style='margin:0;padding:0;"
+        "background:#0a0d12;min-height:100vh;'>" + fragment + "</body></html>"
     )
     return Response(page, mimetype="text/html")
 
