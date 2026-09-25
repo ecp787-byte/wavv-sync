@@ -48,6 +48,17 @@ class Db:
     def __init__(self, database_url: str):
         self.conn = psycopg2.connect(database_url)
         self.conn.autocommit = False
+        # Every reporting-period boundary in wavv_sync_core.py ("today", "this week",
+        # etc.) is computed with date_trunc()/now() against this session's timezone --
+        # there's no separate timezone concept anywhere else in the app. Pin it to
+        # US Eastern (which observes the EST/EDT switch automatically, unlike a fixed
+        # UTC-5 offset) so those boundaries match the business's local day, not UTC.
+        # SET (not SET LOCAL) persists for the whole session, but a later ROLLBACK on
+        # the transaction it's issued in would undo it too -- commit right away so it
+        # sticks regardless of what happens after.
+        with self.conn.cursor() as cur:
+            cur.execute("SET TIME ZONE 'America/New_York'")
+        self.conn.commit()
 
     def close(self):
         self.conn.close()
