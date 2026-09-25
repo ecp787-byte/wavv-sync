@@ -222,12 +222,29 @@
       display: flex; align-items: flex-end; gap: 14px; height: 140px;
       border-bottom: 1px solid var(--baseline); padding: 0 4px 0; margin-top: 16px;
     }
-    #wavv-dash .wavv-daybar { display: flex; flex-direction: column; align-items: center; flex: 1; height: 100%; justify-content: flex-end; gap: 3px; }
+    #wavv-dash .wavv-daybar { display: flex; flex-direction: column; align-items: center; flex: 1; height: 100%; justify-content: flex-end; gap: 3px; cursor: default; }
     #wavv-dash .wavv-bars { display: flex; gap: 3px; align-items: flex-end; height: 110px; }
     #wavv-dash .wavv-bar { width: 14px; border-radius: 3px 3px 0 0; min-height: 2px; }
     #wavv-dash .wavv-bar.outbound { background: var(--series-outbound); }
     #wavv-dash .wavv-bar.inbound { background: var(--series-inbound); }
     #wavv-dash .wavv-daylabel { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+
+    /* Shared hover tooltip for the Last 7 Days / Production Over Time bar charts */
+    #wavv-dash .wavv-tooltip {
+      position: fixed; z-index: 50; pointer-events: none;
+      background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 10px; font-size: 12px; color: var(--text-primary);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.35); opacity: 0; transform: translate(-50%, calc(-100% - 10px));
+      transition: opacity 0.08s ease; white-space: nowrap;
+    }
+    #wavv-dash .wavv-tooltip.visible { opacity: 1; }
+    #wavv-dash .wavv-tooltip-title { font-weight: 700; margin-bottom: 4px; color: var(--text-primary); }
+    #wavv-dash .wavv-tooltip-row { display: flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+    #wavv-dash .wavv-tooltip-row + .wavv-tooltip-row { margin-top: 2px; }
+    #wavv-dash .wavv-tooltip-swatch { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex: 0 0 auto; }
+    #wavv-dash .wavv-tooltip-swatch.outbound { background: var(--series-outbound); }
+    #wavv-dash .wavv-tooltip-swatch.inbound { background: var(--series-inbound); }
+    #wavv-dash .wavv-tooltip-dim { color: var(--text-muted); }
 
     #wavv-dash .wavv-ttgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 16px; }
     #wavv-dash .wavv-ttgroup-label { font-size: 13px; font-weight: 700; margin: 0 0 10px; text-transform: capitalize; }
@@ -583,7 +600,7 @@
             <p class="wavv-section-title">Week over week</p>
           </div>
           <div class="wavv-wowgrid" id="wavv-wow-grid"><div class="wavv-empty">No data yet</div></div>
-          <p class="wavv-ttsecondary" style="margin-top:12px;">This week is week-to-date (Monday start), compared against all of last week.</p>
+          <p class="wavv-ttsecondary" style="margin-top:12px;">This week is week-to-date (Monday start, Eastern time), compared against all of last week.</p>
         </div>
 
         <div class="wavv-card">
@@ -838,6 +855,52 @@
     });
   }
 
+  // Shared hover tooltip for the day/week bar charts (Last 7 Days, Production
+  // Over Time). One tooltip element, reused and repositioned per hovered
+  // column, so hovering anywhere on a day's bars surfaces both the outbound
+  // and inbound counts for that day at once rather than relying on the
+  // browser's slow, one-value-at-a-time native title tooltip.
+  var chartTooltipEl = null;
+  function chartTooltip() {
+    if (!chartTooltipEl) {
+      chartTooltipEl = document.createElement("div");
+      chartTooltipEl.className = "wavv-tooltip";
+      root.appendChild(chartTooltipEl);
+    }
+    return chartTooltipEl;
+  }
+
+  function fmtChartDate(iso) {
+    var d = new Date(iso + "T00:00:00Z");
+    return d.toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  }
+
+  // dayEl: the .wavv-daybar column to attach hover behavior to.
+  // titleText: header line, e.g. "Sep 24" or "Week of Sep 22".
+  // values: { outbound: n, inbound: n }.
+  function attachChartTooltip(dayEl, titleText, values) {
+    var tip = chartTooltip();
+    dayEl.addEventListener("mouseenter", function () {
+      tip.innerHTML =
+        '<div class="wavv-tooltip-title">' + titleText + '</div>' +
+        '<div class="wavv-tooltip-row"><span class="wavv-tooltip-swatch outbound"></span>' +
+          '<span>' + values.outbound + '</span><span class="wavv-tooltip-dim">outbound</span></div>' +
+        '<div class="wavv-tooltip-row"><span class="wavv-tooltip-swatch inbound"></span>' +
+          '<span>' + values.inbound + '</span><span class="wavv-tooltip-dim">inbound</span></div>';
+      tip.classList.add("visible");
+      positionChartTooltip(dayEl);
+    });
+    dayEl.addEventListener("mousemove", function () { positionChartTooltip(dayEl); });
+    dayEl.addEventListener("mouseleave", function () { tip.classList.remove("visible"); });
+  }
+
+  function positionChartTooltip(dayEl) {
+    var tip = chartTooltip();
+    var r = dayEl.querySelector(".wavv-bars").getBoundingClientRect();
+    tip.style.left = (r.left + r.width / 2) + "px";
+    tip.style.top = r.top + "px";
+  }
+
   function renderStats(summary) {
     var totals = { calls: 0, convos: 0, answered: 0, talk: 0 };
     summary.forEach(function (r) {
@@ -876,7 +939,6 @@
         var bar = document.createElement("div");
         bar.className = "wavv-bar " + dir;
         bar.style.height = Math.max(2, Math.round((v[dir] / max) * 110)) + "px";
-        bar.title = dir + ": " + v[dir] + " calls on " + d;
         bars.appendChild(bar);
       });
       var label = document.createElement("div");
@@ -884,6 +946,7 @@
       label.textContent = d.slice(5); // MM-DD
       day.appendChild(bars);
       day.appendChild(label);
+      attachChartTooltip(day, fmtChartDate(d), v);
       chart.appendChild(day);
     });
   }
@@ -1028,7 +1091,6 @@
         var bar = document.createElement("div");
         bar.className = "wavv-bar " + dir;
         bar.style.height = Math.max(2, Math.round((v[dir] / max) * 110)) + "px";
-        bar.title = dir + ": " + v[dir] + " calls, week of " + w;
         bars.appendChild(bar);
       });
       var label = document.createElement("div");
@@ -1036,6 +1098,7 @@
       label.textContent = w.slice(5); // MM-DD, the week's Monday
       day.appendChild(bars);
       day.appendChild(label);
+      attachChartTooltip(day, "Week of " + fmtChartDate(w), v);
       chart.appendChild(day);
     });
   }
@@ -1611,7 +1674,7 @@
         var weekly = results[4], weeklyCompare = results[5];
         lastSummary = summary;
         statusLine.textContent = status.total_calls + " calls in database · " + status.agent_count +
-          " dialer(s) connected · last synced " + timeAgo(status.last_sync_run_at);
+          " dialer(s) connected · last synced " + timeAgo(status.last_sync_run_at) + " · dates in ET";
         root.querySelector("#wavv-greeting-meta").innerHTML =
           "<b>" + status.agent_count + "</b> dialers connected<br><b>" + timeAgo(status.last_sync_run_at) + "</b> last synced";
         renderStats(summary);
